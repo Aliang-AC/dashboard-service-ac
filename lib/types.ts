@@ -33,6 +33,8 @@ export type AllData = {
   orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[];
   absensi: Absensi[]; catatan: Catatan[]; settings: Settings; pengguna: Pengguna[];
   today: string;
+  /* hanya diisi untuk pemilik */
+  backup: { at: number; rows: number } | null; backupUrl: string | null;
 };
 
 export type Result = { ok: true } | { ok: false; error: string };

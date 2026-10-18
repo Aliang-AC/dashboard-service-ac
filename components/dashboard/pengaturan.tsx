@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { addPengguna, removePengguna, saveSettings } from '@/app/actions';
+import { addPengguna, backupNow, removePengguna, saveSettings } from '@/app/actions';
 import { layanan } from '@/lib/derive';
 import { formObj, useDash } from './ctx';
 
@@ -43,7 +43,35 @@ export function Pengaturan() {
       </form>
 
       {d.me.owner && <Akses />}
+      {d.me.owner && <Backup />}
     </>
+  );
+}
+
+/* Hanya pemilik: salinan semua data ke Google Sheet, otomatis tiap tengah malam WIB. */
+function Backup() {
+  const { d, run } = useDash();
+  const [busy, setBusy] = useState(false);
+  const last = d.backup
+    ? new Date(d.backup.at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium', timeStyle: 'short' }) + ` WIB · ${d.backup.rows} baris`
+    : 'Belum pernah';
+  return (
+    <div className="panel" style={{ maxWidth: 720, marginTop: 16 }}>
+      <h3>Backup ke Google Sheets</h3>
+      <p className="hint" style={{ marginBottom: 10 }}>
+        Semua data (order, stok, mutasi stok, karyawan, absensi, catatan) disalin otomatis ke Google Sheet setiap tengah malam WIB.
+        Isi sheet ditimpa setiap backup, jadi jangan diedit langsung di sana.
+      </p>
+      <p style={{ margin: '0 0 12px' }}>Backup terakhir: <b className="num">{last}</b></p>
+      <div className="actions">
+        <Button disabled={busy} onClick={async () => { setBusy(true); await run(backupNow(), 'Backup selesai'); setBusy(false); }}>
+          {busy ? 'Membackup…' : 'Backup sekarang'}
+        </Button>
+        {d.backupUrl && (
+          <Button variant="outline" nativeButton={false} render={<a href={d.backupUrl} target="_blank" rel="noopener noreferrer" />}>Buka Google Sheet</Button>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@
 import { FieldValue, type Transaction, type DocumentSnapshot } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebase-admin';
 import { requireMe } from '@/lib/access';
+import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { nowTimeWIB, todayWIB } from '@/lib/format';
 import {
   STATUS, ABS_ST, type AllData, type Order, type OrderInput, type Part, type Result, type Me,
@@ -37,7 +38,7 @@ export async function loadAll(): Promise<{ ok: true; data: AllData } | { ok: fal
     const me = await requireMe();
     const db = adminDb();
     const docs = <T,>(s: FirebaseFirestore.QuerySnapshot) => s.docs.map(d => ({ id: d.id, ...d.data() }) as T);
-    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, pengguna] = await Promise.all([
+    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, pengguna, backup] = await Promise.all([
       db.collection('orders').orderBy('createdAt', 'desc').limit(1000).get(),
       db.collection('stok').get(),
       db.collection('mutasi').orderBy('createdAt', 'desc').limit(50).get(),
@@ -46,6 +47,7 @@ export async function loadAll(): Promise<{ ok: true; data: AllData } | { ok: fal
       db.collection('catatan').orderBy('createdAt', 'desc').limit(1000).get(),
       db.doc('settings/usaha').get(),
       me.owner ? db.collection('pengguna').get() : null,
+      me.owner ? db.doc('settings/backup').get() : null,
     ]);
     return {
       ok: true,
@@ -56,6 +58,8 @@ export async function loadAll(): Promise<{ ok: true; data: AllData } | { ok: fal
         settings: (settings.data() as Settings) || {},
         pengguna: pengguna ? pengguna.docs.map(d => d.data() as Pengguna) : [],
         today: todayWIB(),
+        backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
+        backupUrl: me.owner ? backupSheetUrl() : null,
       },
     };
   } catch (e) {
@@ -303,6 +307,21 @@ export async function addPengguna(email: string, nama: string): Promise<Result> 
     await adminDb().doc('pengguna/' + e).set({ email: e, nama: str(nama, 80) });
   }, true);
 }
+export async function backupNow(): Promise<Result> {
+  return run(async () => {
+    try { await runBackup(); }
+    catch (e) {
+      console.error(e);
+      const m = e instanceof Error ? e.message : '';
+      throw new UserError(
+        /BACKUP_SHEET_ID/.test(m) ? 'Alamat Google Sheet backup belum diatur (BACKUP_SHEET_ID).'
+          : /403|PERMISSION|disabled|has not been used/i.test(m) ? 'Google Sheets menolak akses. Pastikan Google Sheets API aktif dan sheet dibagikan ke akun robot Firebase.'
+            : 'Backup gagal. Coba lagi beberapa saat lagi.',
+      );
+    }
+  }, true);
+}
+
 export async function removePengguna(email: string): Promise<Result> {
   return run(async () => { await adminDb().doc('pengguna/' + str(email, 200).toLowerCase()).delete(); }, true);
 }
