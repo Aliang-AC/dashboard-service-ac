@@ -15,6 +15,8 @@ const jetbrains = JetBrains_Mono({ variable: '--font-jetbrains', subsets: ['lati
 export const metadata: Metadata = {
   title: APP_NAME,
   description: 'Order, stok, absensi, invoice dan catatan usaha service AC dalam satu dashboard.',
+  /* nama pintasan di layar utama iPhone */
+  appleWebApp: { capable: true, title: 'CV Glory Teknik', statusBarStyle: 'default' },
 };
 export const viewport: Viewport = {
   themeColor: [
@@ -40,7 +42,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="id" suppressHydrationWarning className={`${barlow.variable} ${barlowCondensed.variable} ${jetbrains.variable} antialiased`}>
       <body className="min-h-dvh">
-        <ClerkProvider appearance={{ theme: shadcn }} localization={localization}>
+        <ClerkProvider appearance={{ theme: shadcn, elements: { logoBox: { display: 'none' } } }} localization={localization}>
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
             {children}
             <Toaster position="bottom-center" />
