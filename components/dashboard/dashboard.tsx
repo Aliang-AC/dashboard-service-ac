@@ -13,7 +13,7 @@ import { DashCtx, type Ctx, type Modal, type Tab } from './ctx';
 import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
 import { StokView, StokDialog, StokInDialog } from './stok';
-import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog } from './absensi';
+import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
 import { InvoiceView } from './invoice';
 import { CatatanView, NoteDialog } from './catatan';
 import { Pengaturan } from './pengaturan';
@@ -127,6 +127,7 @@ export function Dashboard() {
             {modal?.kind === 'kar' && <KarDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'abs' && <AbsDialog id={modal.id} tanggal={modal.tanggal} onClose={close} />}
             {modal?.kind === 'akun' && <AkunDialog id={modal.id} onClose={close} />}
+            {modal?.kind === 'riwayat' && <RiwayatDialog id={modal.id} month={modal.month} onClose={close} />}
             {modal?.kind === 'libur' && <LiburDialog onClose={close} />}
             {modal?.kind === 'note' && <NoteDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'text' && (

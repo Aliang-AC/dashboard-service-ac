@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { absenManual, buatAkun, hapusAkun, liburSemua, resetPassword, saveKaryawan } from '@/app/actions';
+import { absenManual, buatAkun, hapusAbsen, hapusAkun, liburSemua, resetPassword, saveKaryawan } from '@/app/actions';
 import { ABS_CLS, karName } from '@/lib/derive';
 import { addDays, fmtD, fmtLong, fmtMonth, monthKey } from '@/lib/format';
 import { ABS_ST, HARI, type AbsRecord, type AbsStatus, type AllData, type Karyawan } from '@/lib/types';
@@ -40,8 +40,9 @@ function AbsensiStaff() {
   const jm = d.settings.jamMasuk || '08:00';
   const [tgl, setTgl] = useState(d.today);
   const [month, setMonth] = useState(d.today.slice(0, 7));
-  const aktif = d.karyawan.filter(k => !k.nonaktif).sort((a, b) => a.nama.localeCompare(b.nama));
   const lewat = tgl < d.today;
+  /* karyawan aktif + yang sudah nonaktif tapi punya catatan di tanggal ini (supaya tetap bisa dikoreksi) */
+  const aktif = d.karyawan.filter(k => !k.nonaktif || recOf(d, tgl, k.id)).sort((a, b) => a.nama.localeCompare(b.nama));
 
   /* rekap bulanan */
   const days = d.absensi.filter(a => monthKey(a.id) === month);
@@ -83,7 +84,7 @@ function AbsensiStaff() {
         {aktif.length ? (
           <div className="tablebox" style={{ border: 0 }}>
             <table>
-              <thead><tr><th>Nama</th><th>Status</th><th>Masuk</th><th>Pulang</th><th className="r">Jarak</th><th>Cara</th><th>Keterangan</th><th></th></tr></thead>
+              <thead><tr><th>Nama</th><th>Status</th><th>Masuk</th><th>Pulang</th><th className="r">Jarak</th><th>Cara</th><th>Keterangan</th></tr></thead>
               <tbody>
                 {aktif.map(k => {
                   const r = recOf(d, tgl, k.id);
@@ -91,14 +92,19 @@ function AbsensiStaff() {
                   const bisaEdit = d.me.peran === 'owner' || k.id !== d.me.karyawanId;
                   return (
                     <tr key={k.id} className={merah ? 'out' : ''} style={merah ? { background: 'var(--bad-soft)' } : undefined}>
-                      <td><b>{k.nama}</b><div className="sm">{k.peran}</div></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <b>{k.nama}</b>{k.nonaktif && <> <span className="pill">nonaktif</span></>}
+                        <div className="actions" style={{ marginTop: 4 }}>
+                          <span className="sm">{k.peran}</span>
+                          {bisaEdit && <Button size="xs" variant="outline" onClick={() => open({ kind: 'abs', id: k.id, tanggal: tgl })}>Koreksi</Button>}
+                        </div>
+                      </td>
                       <td><StatusPill r={r} k={k} tgl={tgl} jamMasuk={jm} /></td>
                       <td className="num" style={telatMenit(r, jm) ? red : undefined}>{r?.masuk || '—'}</td>
                       <td className="num" style={lewat && r?.status === 'Hadir' && r.masuk && !r.pulang ? red : undefined}>{r?.pulang || (lewat && r?.status === 'Hadir' ? 'tidak absen' : '—')}</td>
                       <td className="r num">{r?.masukLoc ? <a className="linkbtn" href={mapsLink(r.masukLoc)} target="_blank" rel="noopener noreferrer">{r.masukLoc.jarak} m</a> : '—'}</td>
                       <td className="sm">{r?.via ? `${r.via}${r.oleh ? ' · ' + r.oleh : ''}` : ''}</td>
                       <td className="sm">{r?.ket}</td>
-                      <td>{bisaEdit && <Button size="sm" variant="outline" onClick={() => open({ kind: 'abs', id: k.id, tanggal: tgl })}>Input manual</Button>}</td>
                     </tr>
                   );
                 })}
@@ -124,7 +130,7 @@ function AbsensiStaff() {
               <tbody>
                 {recap.map(({ k, c }) => (
                   <tr key={k.id}>
-                    <td>{k.nama}{k.nonaktif && <> <span className="pill">nonaktif</span></>}</td>
+                    <td><button className="linkbtn" onClick={() => open({ kind: 'riwayat', id: k.id, month })}>{k.nama}</button>{k.nonaktif && <> <span className="pill">nonaktif</span></>}</td>
                     <td className="r num">{c.Hadir}</td>
                     <td className="r num" style={c.telat ? red : undefined}>{c.telat}×</td>
                     <td className="r num" style={c.menit ? red : undefined}>{c.menit} mnt</td>
@@ -139,6 +145,7 @@ function AbsensiStaff() {
         ) : (
           <div className="empty">Rekap muncul setelah ada karyawan yang absen.</div>
         )}
+        {recap.length > 0 && <p className="hint" style={{ marginTop: 8 }}>Klik nama untuk melihat riwayat sebulan dan mengoreksi tanggal tertentu.</p>}
         {d.arsipUrl && <p className="hint" style={{ marginTop: 8 }}>Arsip permanen per hari: <a className="linkbtn" href={d.arsipUrl} target="_blank" rel="noopener noreferrer">Google Sheet “Absensi Karyawan”</a> (ditambah otomatis tiap 00.00 WIB).</p>}
       </div>
 
@@ -223,16 +230,49 @@ function AbsensiSaya() {
 }
 
 /* ================= dialog ================= */
+export function RiwayatDialog({ id, month, onClose }: { id: string; month: string; onClose: () => void }) {
+  const { d, open } = useDash();
+  const k = d.karyawan.find(x => x.id === id);
+  const jm = d.settings.jamMasuk || '08:00';
+  const rows = d.absensi.filter(a => monthKey(a.id) === month && a.records?.[id]).sort((a, b) => b.id.localeCompare(a.id));
+  const bisaEdit = d.me.peran === 'owner' || id !== d.me.karyawanId;
+  return (
+    <FormDialog title={`Riwayat ${k?.nama || ''} · ${fmtMonth(month)}`} onClose={onClose}>
+      {rows.length ? (
+        <div className="tablebox" style={{ border: 0 }}>
+          <table>
+            <thead><tr><th>Tanggal</th><th>Status</th><th>Masuk</th><th>Pulang</th><th>Keterangan</th><th></th></tr></thead>
+            <tbody>
+              {rows.map(a => {
+                const r = a.records[id];
+                return (
+                  <tr key={a.id} style={isMerah(r, jm, a.id < d.today) ? { background: 'var(--bad-soft)' } : undefined}>
+                    <td className="num">{fmtD(a.id)}</td><td><StatusPill r={r} tgl={a.id} jamMasuk={jm} /></td>
+                    <td className="num">{r.masuk || '—'}</td><td className="num">{r.pulang || '—'}</td><td className="sm">{r.ket}</td>
+                    <td>{bisaEdit && <Button size="xs" variant="outline" onClick={() => open({ kind: 'abs', id, tanggal: a.id })}>Koreksi</Button>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : <div className="empty">Belum ada catatan absensi di bulan ini.</div>}
+    </FormDialog>
+  );
+}
+
 export function AbsDialog({ id, tanggal, onClose }: { id: string; tanggal: string; onClose: () => void }) {
   const { d, run } = useDash();
-  const r = recOf(d, tanggal, id) || {};
+  const ada = recOf(d, tanggal, id);
+  const r = ada || {};
   const [status, setStatus] = useState<AbsStatus>(r.status || 'Hadir');
   return (
-    <FormDialog wide={false} title={`Input manual · ${karName(d, id)} · ${fmtD(tanggal)}`} onClose={onClose}
+    <FormDialog wide={false} title={`Koreksi absensi · ${karName(d, id)} · ${fmtD(tanggal)}`} onClose={onClose}
       onSubmit={form => {
         const f = formObj(form);
         return run(absenManual(id, tanggal, { status, ket: f.ket, masuk: f.masuk, pulang: f.pulang }), 'Absensi dikoreksi');
-      }}>
+      }}
+      onDelete={ada && d.me.peran === 'owner' ? () => run(hapusAbsen(id, tanggal), 'Absensi dihapus') : undefined}>
       <p className="hint">Untuk HP rusak, tugas luar, izin, sakit, atau libur. Tercatat sebagai input manual oleh {d.me.nama}.</p>
       <div className="grid2">
         <label className="lbl">Status<select className="field" value={status} onChange={e => setStatus(e.target.value as AbsStatus)}>{ABS_ST.map(s => <option key={s}>{s}</option>)}</select></label>
@@ -310,7 +350,7 @@ export function AkunDialog({ id, onClose }: { id: string; onClose: () => void })
         <p className="hint">Karyawan login di halaman masuk dengan <b>nomor HP</b> sebagai username dan password di bawah. Berikan password ini langsung ke karyawannya; nanti bisa diganti.</p>
         <div className="grid2">
           <label className="lbl">Nomor HP (username)<input className="field" name="hp" required inputMode="tel" defaultValue={k.hp} placeholder="081234567890" /></label>
-          <label className="lbl">Password awal<input className="field" name="password" required minLength={8} placeholder="min. 8 karakter" /></label>
+          <label className="lbl">Password awal<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka/huruf" /></label>
           {owner && (
             <label className="lbl span2">Peran
               <select className="field" name="peranAkun" defaultValue="karyawan">
@@ -327,7 +367,7 @@ export function AkunDialog({ id, onClose }: { id: string; onClose: () => void })
     <FormDialog wide={false} title={`Akun login · ${k.nama}`} submitLabel="Ganti password" onClose={onClose}
       onSubmit={form => { const f = formObj(form); return run(resetPassword(k.id, f.password), 'Password diganti'); }}>
       <p>Username: <b className="mono">{k.akun.username}</b> · peran <b>{k.akun.peran === 'admin' ? 'Admin' : 'Karyawan'}</b></p>
-      <label className="lbl">Password baru<input className="field" name="password" required minLength={8} placeholder="min. 8 karakter" autoFocus /></label>
+      <label className="lbl">Password baru<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka/huruf" autoFocus /></label>
       <p className="hint">Mengganti password akan mengeluarkan akun ini dari semua HP yang sedang login.</p>
       <div>
         <Button type="button" variant="destructive" onClick={async () => {

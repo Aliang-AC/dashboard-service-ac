@@ -80,32 +80,20 @@ export async function tandaiAlpa(tanggal: string) {
 
 const HEADER = ['Tanggal', 'Hari', 'Nama', 'Status', 'Masuk', 'Pulang', 'Telat (menit)', 'Jarak masuk (m)', 'Jarak pulang (m)', 'Lokasi masuk', 'Cara', 'Dicatat oleh', 'Keterangan', 'Perlu perhatian'];
 
-/* Tambahkan baris absensi `tanggal` ke file "Absensi Karyawan" (tab per bulan). Tidak pernah menimpa. */
-export async function arsipkan(tanggal: string) {
-  const db = adminDb();
-  const cfg = await db.doc('settings/arsip').get();
-  const sheetId = cfg.get('absensiSheetId') as string | undefined;
-  if (!sheetId) return { skipped: 'arsip belum diatur' };
-  if ((cfg.get('lastDate') || '') >= tanggal) return { skipped: 'sudah diarsipkan' };
+/* satu baris arsip; `awalan` dipakai untuk baris koreksi */
+function barisArsip(tanggal: string, nama: string, r: AbsRecord, jamMasuk: string, awalan = '') {
+  const telat = r.status === 'Hadir' ? menitTelat(r.masuk, jamMasuk) : 0;
+  const tanpaPulang = r.status === 'Hadir' && !!r.masuk && !r.pulang;
+  const ket = [awalan, r.ket, tanpaPulang ? 'Tidak absen pulang' : ''].filter(Boolean).join(' · ');
+  const merah = r.status === 'Alpa' || telat > 0 || tanpaPulang;
+  return [tanggal, HARI[hariDari(tanggal)], nama, r.status || '', r.masuk || '', r.pulang || '', telat,
+    r.masukLoc?.jarak ?? '', r.pulangLoc?.jarak ?? '',
+    r.masukLoc ? `https://www.google.com/maps?q=${r.masukLoc.lat},${r.masukLoc.lng}` : '',
+    r.via || '', r.oleh || '', ket, merah ? 'Ya' : ''];
+}
 
-  const [kar, absSnap, setSnap] = await Promise.all([db.collection('karyawan').get(), db.doc('absensi/' + tanggal).get(), db.doc('settings/usaha').get()]);
-  const jamMasuk = setSnap.get('jamMasuk') || '08:00';
-  const records = ((absSnap.data() as Absensi | undefined)?.records || {}) as Record<string, AbsRecord>;
-  const nama = (id: string) => kar.docs.find(d => d.id === id)?.get('nama') || '(dihapus)';
-  const rows = Object.entries(records)
-    .sort((a, b) => nama(a[0]).localeCompare(nama(b[0])))
-    .map(([kid, r]) => {
-      const telat = r.status === 'Hadir' ? menitTelat(r.masuk, jamMasuk) : 0;
-      const tanpaPulang = r.status === 'Hadir' && !!r.masuk && !r.pulang;
-      const ket = [r.ket, tanpaPulang ? 'Tidak absen pulang' : ''].filter(Boolean).join(' · ');
-      const merah = r.status === 'Alpa' || telat > 0 || tanpaPulang;
-      return [tanggal, HARI[hariDari(tanggal)], nama(kid), r.status || '', r.masuk || '', r.pulang || '', telat,
-        r.masukLoc?.jarak ?? '', r.pulangLoc?.jarak ?? '',
-        r.masukLoc ? `https://www.google.com/maps?q=${r.masukLoc.lat},${r.masukLoc.lng}` : '',
-        r.via || '', r.oleh || '', ket, merah ? 'Ya' : ''];
-    });
-
-  const api = await sheetsApi(sheetId);
+/* pastikan tab bulan ada, lengkap dengan judul kolom + aturan baris merah; kembalikan nama tab */
+async function siapkanTab(api: Awaited<ReturnType<typeof sheetsApi>>, tanggal: string) {
   const tab = fmtMonth(tanggal.slice(0, 7));
   const existing = await api.tabs();
   let tabId = existing.find(t => t.title === tab)?.sheetId;
@@ -113,7 +101,6 @@ export async function arsipkan(tanggal: string) {
     const add = await api.call(':batchUpdate', { requests: [{ addSheet: { properties: { title: tab, gridProperties: { frozenRowCount: 1 } } } }] });
     tabId = add.replies[0].addSheet.properties.sheetId as number;
   }
-  /* tab baru (atau setup sebelumnya gagal): tulis judul kolom + aturan baris merah */
   const head = await api.call(`/values/${encodeURIComponent(a1(tab) + '!A1:A1')}`);
   if (!head.values?.length) {
     const range = { sheetId: tabId, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: HEADER.length };
@@ -128,7 +115,50 @@ export async function arsipkan(tanggal: string) {
     await api.call(':batchUpdate', { requests });
     await api.call(`/values/${encodeURIComponent(a1(tab) + '!A1')}:append?valueInputOption=RAW`, { values: [HEADER] });
   }
-  if (rows.length) await api.call(`/values/${encodeURIComponent(a1(tab) + '!A1')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { values: rows });
+  return tab;
+}
+
+const tambahBaris = (api: Awaited<ReturnType<typeof sheetsApi>>, tab: string, rows: unknown[][]) =>
+  api.call(`/values/${encodeURIComponent(a1(tab) + '!A1')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { values: rows });
+
+/* Tambahkan baris absensi `tanggal` ke file "Absensi Karyawan" (tab per bulan). Tidak pernah menimpa. */
+export async function arsipkan(tanggal: string) {
+  const db = adminDb();
+  const cfg = await db.doc('settings/arsip').get();
+  const sheetId = cfg.get('absensiSheetId') as string | undefined;
+  if (!sheetId) return { skipped: 'arsip belum diatur' };
+  if ((cfg.get('lastDate') || '') >= tanggal) return { skipped: 'sudah diarsipkan' };
+
+  const [kar, absSnap, setSnap] = await Promise.all([db.collection('karyawan').get(), db.doc('absensi/' + tanggal).get(), db.doc('settings/usaha').get()]);
+  const jamMasuk = setSnap.get('jamMasuk') || '08:00';
+  const records = ((absSnap.data() as Absensi | undefined)?.records || {}) as Record<string, AbsRecord>;
+  const nama = (id: string) => kar.docs.find(d => d.id === id)?.get('nama') || '(dihapus)';
+  const rows = Object.entries(records)
+    .sort((a, b) => nama(a[0]).localeCompare(nama(b[0])))
+    .map(([kid, r]) => barisArsip(tanggal, nama(kid), r, jamMasuk));
+
+  const api = await sheetsApi(sheetId);
+  const tab = await siapkanTab(api, tanggal);
+  if (rows.length) await tambahBaris(api, tab, rows);
   await db.doc('settings/arsip').set({ lastDate: tanggal }, { merge: true });
   return { rows: rows.length };
 }
+
+/* Koreksi/hapus untuk tanggal yang SUDAH diarsipkan → tambah baris "KOREKSI" (baris lama tetap ada sebagai jejak).
+   rec = null berarti absensi dihapus. Gagal menulis arsip tidak membatalkan koreksi di dashboard. */
+export async function arsipKoreksi(tanggal: string, nama: string, rec: AbsRecord | null, oleh: string) {
+  try {
+    const db = adminDb();
+    const cfg = await db.doc('settings/arsip').get();
+    const sheetId = cfg.get('absensiSheetId') as string | undefined;
+    if (!sheetId || (cfg.get('lastDate') || '') < tanggal) return; // belum diarsipkan: nanti ikut proses malam
+    const jamMasuk = (await db.doc('settings/usaha').get()).get('jamMasuk') || '08:00';
+    const waktu = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'short', timeStyle: 'short' });
+    const row = rec
+      ? barisArsip(tanggal, nama, { ...rec, oleh }, jamMasuk, `KOREKSI ${waktu}`)
+      : [tanggal, HARI[hariDari(tanggal)], nama, 'DIHAPUS', '', '', '', '', '', '', 'Manual', oleh, `KOREKSI ${waktu} · absensi dihapus pemilik`, ''];
+    const api = await sheetsApi(sheetId);
+    await tambahBaris(api, await siapkanTab(api, tanggal), [row]);
+  } catch (e) { console.error('arsipKoreksi', e); }
+}
+

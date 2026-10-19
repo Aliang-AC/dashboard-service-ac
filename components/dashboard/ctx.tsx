@@ -11,6 +11,7 @@ export type Modal =
   | { kind: 'kar'; id?: string }
   | { kind: 'akun'; id: string }
   | { kind: 'abs'; id: string; tanggal: string }
+  | { kind: 'riwayat'; id: string; month: string }
   | { kind: 'libur' }
   | { kind: 'note'; id?: string }
   | { kind: 'text'; title: string; text: string };

@@ -7,7 +7,7 @@ import { clerkClient } from '@clerk/nextjs/server';
 import { adminDb } from '@/lib/firebase-admin';
 import { atLeast, requireMe } from '@/lib/access';
 import { backupSheetUrl, runBackup } from '@/lib/backup';
-import { buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
+import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
 import { nowTimeWIB, todayWIB } from '@/lib/format';
 import {
   STATUS, ABS_ST, type AllData, type Order, type OrderInput, type Part, type Result, type ResultOf, type Me, type Peran,
@@ -284,7 +284,8 @@ const usernameDari = (hp: string) => {
   if (!/^0\d{8,13}$/.test(d)) throw new UserError('Nomor HP tidak valid. Contoh: 081234567890.');
   return d;
 };
-const cekPassword = (p: string) => { if (String(p || '').length < 8) throw new UserError('Password minimal 8 karakter.'); return String(p); };
+/* minimal 6 karakter (boleh angka saja seperti PIN); Clerk mengunci akun sementara kalau salah berkali-kali */
+const cekPassword = (p: string) => { if (String(p || '').length < 6) throw new UserError('Password minimal 6 karakter.'); return String(p); };
 const clerkMsg = (e: unknown) => {
   const errs = (e as { errors?: { code?: string; longMessage?: string; message?: string }[] })?.errors;
   const code = errs?.[0]?.code || '';
@@ -405,6 +406,25 @@ export async function absenManual(kid: string, tanggal: string, v: AbsRecord): P
       const records = { ...(((await tx.get(ref)).get('records') || {}) as Record<string, AbsRecord>), [kid]: rec };
       tx.set(ref, { tanggal, records });
     });
+    await arsipKoreksi(tanggal, (await db.doc('karyawan/' + kid).get()).get('nama') || kid, rec, me.nama);
+  });
+}
+
+/* Hapus catatan absensi satu karyawan di satu tanggal — khusus pemilik. Jejaknya tetap tercatat di arsip Drive. */
+export async function hapusAbsen(kid: string, tanggal: string): Promise<Result> {
+  return run('owner', async me => {
+    kid = str(kid, 64);
+    if (!isDate(tanggal)) throw new UserError('Tanggal tidak valid.');
+    const db = adminDb();
+    const ref = db.doc('absensi/' + tanggal);
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) return;
+      const records = { ...((s.get('records') || {}) as Record<string, AbsRecord>) };
+      delete records[kid];
+      tx.set(ref, { tanggal, records });
+    });
+    await arsipKoreksi(tanggal, (await db.doc('karyawan/' + kid).get()).get('nama') || kid, null, me.nama);
   });
 }
 
