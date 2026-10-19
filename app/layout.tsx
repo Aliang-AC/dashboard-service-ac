@@ -33,7 +33,8 @@ const localization = {
   formFieldLabel__password: 'Password / PIN',
   signIn: {
     ...idID.signIn,
-    start: { ...idID.signIn?.start, title: `Masuk ke ${APP_NAME}`, subtitle: 'Masukkan nomor HP dan PIN dari admin' },
+    /* komponen login Clerk sekarang hanya dipakai pemilik (Google); karyawan memakai form Nomor HP + PIN sendiri */
+    start: { ...idID.signIn?.start, title: `Masuk pemilik · ${APP_NAME}`, subtitle: 'Gunakan akun Google pemilik' },
     password: { ...idID.signIn?.password, title: 'Masukkan Password / PIN', subtitle: 'untuk masuk ke ' + APP_NAME },
   },
 };

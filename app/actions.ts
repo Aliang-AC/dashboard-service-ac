@@ -9,6 +9,7 @@ import { atLeast, requireMe } from '@/lib/access';
 import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
 import { nowTimeWIB, todayWIB } from '@/lib/format';
+import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
   STATUS, ABS_ST, type AllData, type Order, type OrderInput, type Part, type Result, type ResultOf, type Me, type Peran,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
@@ -277,23 +278,20 @@ export async function saveKaryawan(id: string | null, v: KaryawanInput): Promise
   });
 }
 
-/* nomor HP → username Clerk: hanya angka, 08xx… (contoh 081234567890) */
-const usernameDari = (hp: string) => {
-  let d = String(hp || '').replace(/\D/g, '');
-  if (d.startsWith('62')) d = '0' + d.slice(2);
-  if (!/^0\d{8,13}$/.test(d)) throw new UserError('Nomor HP tidak valid. Contoh: 081234567890.');
-  return d;
+/* Akun karyawan: login dengan nomor HP + PIN yang diperiksa server kita (hash scrypt di akun/{uid}),
+   lalu server membuat "tiket masuk" Clerk sekali pakai. Jadi aturan password Clerk tidak berlaku untuk PIN. */
+const cekHp = (hp: string) => { const d = normalHp(hp); if (!d) throw new UserError('Nomor HP tidak valid. Contoh: 081234567890.'); return d; };
+const cekPin = (p: string) => {
+  const s = String(p || '');
+  if (s.length < 6 || s.length > 32) throw new UserError('PIN minimal 6 karakter.');
+  return s;
 };
-/* minimal 6 karakter (boleh angka saja seperti PIN); Clerk mengunci akun sementara kalau salah berkali-kali */
-const cekPassword = (p: string) => { if (String(p || '').length < 6) throw new UserError('Password minimal 6 karakter.'); return String(p); };
+/* pesan error Clerk apa adanya (tidak ditebak), supaya mudah ditelusuri */
 const clerkMsg = (e: unknown) => {
   const errs = (e as { errors?: { code?: string; longMessage?: string; message?: string }[] })?.errors;
   const code = errs?.[0]?.code || '';
   if (/form_identifier_exists|username_exists/.test(code)) return 'Nomor HP ini sudah dipakai akun lain.';
-  if (/form_password_pwned/.test(code)) return 'Password terlalu umum. Pakai kombinasi lain.';
-  if (/form_param_unknown|not_allowed|username/.test(code + (errs?.[0]?.message || '')))
-    return 'Login nomor HP belum diaktifkan di Clerk (Username + Password). Lihat panduan di chat.';
-  return 'Gagal membuat akun: ' + (errs?.[0]?.longMessage || errs?.[0]?.message || 'coba lagi.');
+  return `Gagal di Clerk (${code || 'unknown'}): ${errs?.[0]?.longMessage || errs?.[0]?.message || 'coba lagi.'}`;
 };
 
 /* Pemilik boleh membuat akun admin/karyawan; admin hanya akun karyawan, dan tidak bisa mengubah akun admin. */
@@ -310,30 +308,64 @@ export async function buatAkun(kid: string, hp: string, password: string, peran:
     if (peran === 'admin' && me.peran !== 'owner') throw new UserError('Hanya pemilik yang bisa membuat akun admin.');
     const k = await karyawanUntukAkun(me, kid);
     if (k.akun) throw new UserError('Karyawan ini sudah punya akun login.');
-    const username = usernameDari(hp), pw = cekPassword(password);
+    const nohp = cekHp(hp), pin = cekPin(password);
     const role = peran === 'admin' ? 'admin' : 'karyawan';
+    const db = adminDb();
+    const dup = await db.collection('akun').where('hp', '==', nohp).limit(1).get();
+    if (!dup.empty) throw new UserError('Nomor HP ini sudah dipakai akun lain.');
     const clerk = await clerkClient();
     let uid: string;
     try {
-      const u = await clerk.users.createUser({ username, password: pw, firstName: k.nama.slice(0, 50), skipPasswordChecks: true });
+      const u = await clerk.users.createUser({ username: clerkUsername(nohp), password: passwordAcak(), firstName: k.nama.slice(0, 50), skipPasswordChecks: true });
       uid = u.id;
     } catch (e) { console.error(e); throw new UserError(clerkMsg(e)); }
-    const db = adminDb();
+    const { salt, hash } = hashPin(pin);
     const batch = db.batch();
-    batch.set(db.doc('akun/' + uid), { peran: role, karyawanId: k.id, nama: k.nama, username, createdAt: Date.now(), oleh: me.nama });
-    batch.update(db.doc('karyawan/' + k.id), { akun: { uid, username, peran: role } });
+    batch.set(db.doc('akun/' + uid), { peran: role, karyawanId: k.id, nama: k.nama, username: nohp, hp: nohp, pinSalt: salt, pinHash: hash, gagal: 0, createdAt: Date.now(), oleh: me.nama });
+    batch.update(db.doc('karyawan/' + k.id), { akun: { uid, username: nohp, peran: role } });
     await batch.commit();
   });
 }
 
+/* Ganti PIN: simpan hash baru + keluarkan akun dari semua HP (sesi Clerk dicabut). */
 export async function resetPassword(kid: string, password: string): Promise<Result> {
   return run('admin', async me => {
     const k = await karyawanUntukAkun(me, kid);
     if (!k.akun) throw new UserError('Karyawan ini belum punya akun.');
-    const pw = cekPassword(password);
-    try { await (await clerkClient()).users.updateUser(k.akun.uid, { password: pw, skipPasswordChecks: true, signOutOfOtherSessions: true }); }
-    catch (e) { console.error(e); throw new UserError(clerkMsg(e)); }
+    const { salt, hash } = hashPin(cekPin(password));
+    await adminDb().doc('akun/' + k.akun.uid).update({ pinSalt: salt, pinHash: hash, gagal: 0, lockUntil: 0 });
+    try { await (await clerkClient()).users.updateUser(k.akun.uid, { password: passwordAcak(), skipPasswordChecks: true, signOutOfOtherSessions: true }); }
+    catch (e) { console.error(e); /* PIN sudah diganti; gagal logout paksa tidak fatal */ }
   });
+}
+
+/* Login karyawan (tanpa sesi): cek nomor HP + PIN → tiket masuk Clerk berlaku 60 detik.
+   5× salah → dikunci 15 menit. Pesan error sengaja umum supaya tidak membocorkan nomor yang terdaftar. */
+export async function loginPin(hp: string, pin: string): Promise<ResultOf<{ ticket: string }>> {
+  try {
+    const nohp = normalHp(hp);
+    const salahMsg = { ok: false as const, error: 'Nomor HP atau PIN salah.' };
+    if (!nohp || String(pin || '').length < 6) return salahMsg;
+    const db = adminDb();
+    const q = await db.collection('akun').where('hp', '==', nohp).limit(1).get();
+    if (q.empty) return salahMsg;
+    const ref = q.docs[0].ref, a = q.docs[0].data();
+    const now = Date.now();
+    if ((a.lockUntil || 0) > now) return { ok: false, error: `Terlalu banyak percobaan. Coba lagi dalam ${Math.ceil((a.lockUntil - now) / 60000)} menit.` };
+    if (!cocokPin(String(pin), a.pinSalt, a.pinHash)) {
+      const gagal = (a.gagal || 0) + 1;
+      await ref.update(gagal >= MAKS_GAGAL ? { gagal: 0, lockUntil: now + KUNCI_MENIT * 60000 } : { gagal });
+      return gagal >= MAKS_GAGAL ? { ok: false, error: `PIN salah ${MAKS_GAGAL}×. Akun dikunci ${KUNCI_MENIT} menit.` } : salahMsg;
+    }
+    const kar = a.karyawanId ? await db.doc('karyawan/' + a.karyawanId).get() : null;
+    if (kar?.get('nonaktif')) return { ok: false, error: 'Akun ini sudah nonaktif. Hubungi admin.' };
+    await ref.update({ gagal: 0, lockUntil: 0, lastLogin: now });
+    const t = await (await clerkClient()).signInTokens.createSignInToken({ userId: ref.id, expiresInSeconds: 60 });
+    return { ok: true, data: { ticket: t.token } };
+  } catch (e) {
+    console.error(e);
+    return { ok: false, error: 'Login gagal. Periksa koneksi lalu coba lagi.' };
+  }
 }
 
 export async function hapusAkun(kid: string): Promise<Result> {

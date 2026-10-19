@@ -347,10 +347,10 @@ export function AkunDialog({ id, onClose }: { id: string; onClose: () => void })
     return (
       <FormDialog wide={false} title={`Buat akun login · ${k.nama}`} submitLabel="Buat akun" onClose={onClose}
         onSubmit={form => { const f = formObj(form); return run(buatAkun(k.id, f.hp, f.password, (f.peranAkun as 'admin' | 'karyawan') || 'karyawan'), 'Akun dibuat'); }}>
-        <p className="hint">Karyawan login di halaman masuk dengan <b>nomor HP</b> sebagai username dan password di bawah. Berikan password ini langsung ke karyawannya; nanti bisa diganti.</p>
+        <p className="hint">Karyawan login di halaman masuk dengan <b>nomor HP</b> dan <b>PIN</b> di bawah. Berikan PIN ini langsung ke karyawannya; nanti bisa diganti.</p>
         <div className="grid2">
           <label className="lbl">Nomor HP (username)<input className="field" name="hp" required inputMode="tel" defaultValue={k.hp} placeholder="081234567890" /></label>
-          <label className="lbl">Password awal<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka/huruf" /></label>
+          <label className="lbl">PIN awal<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka" /></label>
           {owner && (
             <label className="lbl span2">Peran
               <select className="field" name="peranAkun" defaultValue="karyawan">
@@ -364,11 +364,11 @@ export function AkunDialog({ id, onClose }: { id: string; onClose: () => void })
     );
 
   return (
-    <FormDialog wide={false} title={`Akun login · ${k.nama}`} submitLabel="Ganti password" onClose={onClose}
-      onSubmit={form => { const f = formObj(form); return run(resetPassword(k.id, f.password), 'Password diganti'); }}>
+    <FormDialog wide={false} title={`Akun login · ${k.nama}`} submitLabel="Ganti PIN" onClose={onClose}
+      onSubmit={form => { const f = formObj(form); return run(resetPassword(k.id, f.password), 'PIN diganti'); }}>
       <p>Username: <b className="mono">{k.akun.username}</b> · peran <b>{k.akun.peran === 'admin' ? 'Admin' : 'Karyawan'}</b></p>
-      <label className="lbl">Password baru<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka/huruf" autoFocus /></label>
-      <p className="hint">Mengganti password akan mengeluarkan akun ini dari semua HP yang sedang login.</p>
+      <label className="lbl">PIN baru<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka" autoFocus /></label>
+      <p className="hint">Mengganti PIN akan mengeluarkan akun ini dari semua HP yang sedang login, dan membuka kunci kalau akun terkunci karena salah PIN.</p>
       <div>
         <Button type="button" variant="destructive" onClick={async () => {
           if (!armed) return setArmed(true);
