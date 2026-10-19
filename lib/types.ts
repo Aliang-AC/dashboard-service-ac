@@ -17,7 +17,13 @@ export type Order = {
   status: Status; ket: string;
   pembayaran: Pembayaran[]; dibayar: number; bayar: BayarStatus; jatuhTempo: string;
   foto: Foto[]; catatanTeknisi: string;
+  rekapId: string; // kalau ditagih lewat invoice gabungan bulanan
   invoice: string; createdAt: number; updatedAt: number; paidAt: string | null;
+};
+/* Invoice gabungan bulanan untuk instansi: mengelompokkan beberapa order; total/sisa dihitung dari order-ordernya */
+export type Rekap = {
+  id: string; nomor: string; pelangganId: string; pelanggan: string; bulan: string;
+  orderIds: string[]; tanggal: string; jatuhTempo: string; createdAt: number; oleh: string;
 };
 /* foto bukti kerja; id = id file di Google Drive (Shared Drive) */
 export const JENIS_FOTO = ['Sebelum', 'Sesudah'] as const;
@@ -39,6 +45,7 @@ export type Pelanggan = {
   tempoHari: number;      // tempo bayar (instansi), 0 = bayar di tempat
   intervalBulan: number;  // pengingat servis berikutnya
   units: UnitAC[]; catatan: string; createdAt: number;
+  diingatkan?: string; // tanggal terakhir dihubungi untuk pengingat servis
 };
 
 /* hargaBeli disembunyikan (null) untuk selain pemilik */
@@ -67,14 +74,14 @@ export type Catatan = {
   pelanggan: string; untuk: string; selesai: boolean; doneAt?: number; createdAt: number;
 };
 export type Layanan = { nama: string; harga: number };
-export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; rekening?: string; layanan?: Layanan[] };
+export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string };
 export type Lokasi = { lat: number; lng: number; radius: number };
 
 export type Me = { uid: string; nama: string; login: string; peran: Peran; karyawanId: string | null };
 
 export type AllData = {
   me: Me;
-  orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[]; pelanggan: Pelanggan[]; fotoAktif: boolean;
+  orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[]; pelanggan: Pelanggan[]; rekap: Rekap[]; fotoAktif: boolean;
   absensi: Absensi[]; catatan: Catatan[]; settings: Settings; lokasi: Lokasi | null;
   today: string;
   /* hanya diisi untuk pemilik */

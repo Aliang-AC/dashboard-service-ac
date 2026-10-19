@@ -9,6 +9,8 @@ export type Modal =
   | { kind: 'pelanggan'; id?: string }
   | { kind: 'bayar'; id: string }
   | { kind: 'tugas'; id: string }
+  | { kind: 'rekapBaru' }
+  | { kind: 'bayarRekap'; id: string }
   | { kind: 'stok'; id?: string }
   | { kind: 'stok-in'; id: string; adj: boolean }
   | { kind: 'kar'; id?: string }

@@ -2,7 +2,7 @@ import 'server-only';
 import { adminDb } from './firebase-admin';
 import { a1, isDefaultTab, sheetsApi } from './sheets';
 import { normOrder, sisa, subtotalItems, subtotalParts } from './order';
-import type { Absensi, Catatan, Karyawan, Mutasi, Pelanggan, Stok } from './types';
+import type { Absensi, Catatan, Karyawan, Mutasi, Pelanggan, Rekap, Stok } from './types';
 
 /* Backup semua data dashboard ke satu Google Sheet (BACKUP_SHEET_ID).
    Ditulis oleh akun robot Firebase (service account) — sheet harus dibagikan ke email akun itu sebagai Editor.
@@ -17,9 +17,9 @@ export const backupSheetUrl = () =>
 async function collect() {
   const db = adminDb();
   const all = async <T,>(name: string) => (await db.collection(name).get()).docs.map(d => ({ id: d.id, ...d.data() }) as T);
-  const [rawOrders, stok, mutasi, karyawan, absensi, catatan, pelanggan] = await Promise.all([
+  const [rawOrders, stok, mutasi, karyawan, absensi, catatan, pelanggan, rekap] = await Promise.all([
     all<Record<string, unknown>>('orders'), all<Stok>('stok'), all<Mutasi>('mutasi'),
-    all<Karyawan>('karyawan'), all<Absensi>('absensi'), all<Catatan>('catatan'), all<Pelanggan>('pelanggan'),
+    all<Karyawan>('karyawan'), all<Absensi>('absensi'), all<Catatan>('catatan'), all<Pelanggan>('pelanggan'), all<Rekap>('rekap'),
   ]);
   const orders = rawOrders.map(normOrder);
   const nama = (id: string) => karyawan.find(k => k.id === id)?.nama || '';
@@ -37,6 +37,14 @@ async function collect() {
           o.diskon, o.total, o.status, o.bayar, o.dibayar, sisa(o), o.jatuhTempo,
           o.pembayaran.map(p => `${p.tanggal} ${p.metode} ${p.jumlah}`).join('; '), o.paidAt || '', o.ket,
         ]),
+    ],
+    'Rekap bulanan': [
+      ['No. rekap', 'Pelanggan', 'Periode', 'Tanggal', 'Jatuh tempo', 'Jumlah order', 'Total', 'Dibayar', 'Sisa', 'No. invoice'],
+      ...rekap.sort((a, b) => a.createdAt - b.createdAt).map(r => {
+        const os = orders.filter(o => r.orderIds.includes(o.id));
+        const total = os.reduce((a, o) => a + o.total, 0), kurang = os.reduce((a, o) => a + sisa(o), 0);
+        return [r.nomor, r.pelanggan, r.bulan, r.tanggal, r.jatuhTempo, os.length, total, total - kurang, kurang, os.map(o => o.invoice).join(', ')];
+      }),
     ],
     Pelanggan: [
       ['Nama', 'Jenis', 'HP', 'Alamat', 'Tempo (hari)', 'Servis tiap (bulan)', 'Unit AC', 'Catatan'],

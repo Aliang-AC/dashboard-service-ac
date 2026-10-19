@@ -10,11 +10,11 @@ import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
 import { buangFoto, fotoAktif, sambungSkrip, uploadFoto } from '@/lib/drive';
 import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
-import { hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
+import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
   STATUS, ABS_ST, METODE, JENIS_PELANGGAN, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
-  type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO,
+  type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO, type Rekap,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
 } from '@/lib/types';
 
@@ -67,6 +67,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       staff ? db.collection('pelanggan').get() : null,
       fotoAktif(),
     ]);
+    const rekap = staff ? await db.collection('rekap').orderBy('createdAt', 'desc').limit(300).get() : null;
     const arsipId = me.peran === 'owner' ? (await db.doc('settings/arsip').get()).get('absensiSheetId') : null;
 
     let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
@@ -91,7 +92,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
-      pelanggan: pelanggan ? docs<Pelanggan>(pelanggan) : [], fotoAktif: adaFoto,
+      pelanggan: pelanggan ? docs<Pelanggan>(pelanggan) : [], rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto,
       settings: st, lokasi: lok, today: todayWIB(),
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
@@ -205,7 +206,7 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         tanggal, jam, pelangganId: pelRef.id, pelanggan: nama, hp, alamat, teknisi,
         items, parts, diskon, total, status, ket: str(input.ket, 1000),
         pembayaran, dibayar, bayar, jatuhTempo,
-        foto: old?.foto || [], catatanTeknisi: old?.catatanTeknisi || '',
+        foto: old?.foto || [], catatanTeknisi: old?.catatanTeknisi || '', rekapId: old?.rekapId || '',
         invoice, createdAt: old?.createdAt || Date.now(), updatedAt: Date.now(),
         paidAt: bayar === 'Lunas' ? old?.paidAt || todayWIB() : null,
       };
@@ -403,6 +404,83 @@ export async function setDriveFoto(link: string): Promise<ResultOf<{ nama: strin
       throw new UserError(/unauthorized/.test(m) ? 'Kata sandi di skrip tidak cocok. Salin ulang kode skrip dari panduan.' : 'Skrip tidak bisa dipanggil. Pastikan sudah Deploy sebagai Web app dengan "Execute as: Me" dan "Who has access: Anyone".');
     }
   });
+}
+
+/* ---------------- invoice gabungan bulanan (instansi) ---------------- */
+export async function buatRekap(pelangganId: string, bulan: string, orderIds: string[], jatuhTempo: string): Promise<ResultOf<{ id: string }>> {
+  return guarded('admin', async me => {
+    if (!/^\d{4}-\d{2}$/.test(bulan)) throw new UserError('Bulan tidak valid.');
+    if (!isDate(jatuhTempo)) throw new UserError('Jatuh tempo tidak valid.');
+    const ids = [...new Set((orderIds || []).map(x => str(x, 64)).filter(Boolean))].slice(0, 200);
+    if (!ids.length) throw new UserError('Pilih minimal satu order.');
+    const db = adminDb();
+    const ref = db.collection('rekap').doc();
+    await db.runTransaction(async tx => {
+      const pSnap = await tx.get(db.doc('pelanggan/' + str(pelangganId, 64)));
+      if (!pSnap.exists) throw new UserError('Pelanggan tidak ditemukan.');
+      const snaps = await tx.getAll(...ids.map(id => db.doc('orders/' + id)));
+      const counterRef = db.doc(`counters/rek-${todayWIB().slice(0, 7)}`);
+      const c = await tx.get(counterRef);
+      for (const s of snaps) {
+        if (!s.exists) throw new UserError('Ada order yang sudah dihapus. Muat ulang lalu coba lagi.');
+        const o = normOrder({ id: s.id, ...s.data() });
+        if (o.pelangganId !== pSnap.id) throw new UserError(`Order ${o.invoice} bukan milik pelanggan ini.`);
+        if (o.rekapId) throw new UserError(`Order ${o.invoice} sudah masuk rekap lain.`);
+        if (o.status === 'Batal') throw new UserError(`Order ${o.invoice} sudah dibatalkan.`);
+      }
+      const n = (c.get('n') || 0) + 1;
+      const nomor = `REK/${todayWIB().slice(0, 4)}/${todayWIB().slice(5, 7)}/${String(n).padStart(4, '0')}`;
+      tx.set(counterRef, { n });
+      tx.set(ref, { nomor, pelangganId: pSnap.id, pelanggan: pSnap.get('nama'), bulan, orderIds: ids, tanggal: todayWIB(), jatuhTempo, createdAt: Date.now(), oleh: me.nama });
+      for (const s of snaps) tx.update(s.ref, { rekapId: ref.id, jatuhTempo, updatedAt: Date.now() });
+    });
+    return { id: ref.id };
+  });
+}
+
+/* pembayaran di tingkat rekap → dibagi ke order-order di dalamnya (yang paling lama dulu) */
+export async function bayarRekap(rekapId: string, v: { tanggal: string; jumlah: number; metode: Metode; ket: string }): Promise<Result> {
+  return run('admin', async me => {
+    const tanggal = str(v.tanggal, 10), jumlah = Math.round(num(v.jumlah));
+    if (!isDate(tanggal) || tanggal > todayWIB()) throw new UserError('Tanggal bayar tidak valid.');
+    if (jumlah <= 0) throw new UserError('Jumlah bayar harus lebih dari 0.');
+    if (!METODE.includes(v.metode)) throw new UserError('Pilih metode bayar.');
+    const db = adminDb();
+    await db.runTransaction(async tx => {
+      const r = await tx.get(db.doc('rekap/' + str(rekapId, 64)));
+      if (!r.exists) throw new UserError('Rekap tidak ditemukan.');
+      const snaps = await tx.getAll(...((r.get('orderIds') || []) as string[]).map(id => db.doc('orders/' + id)));
+      const orders = snaps.filter(s => s.exists).map(s => normOrder({ id: s.id, ...s.data() }));
+      const { hasil, lebih } = alokasiBayar(orders, jumlah);
+      if (lebih > 0) throw new UserError(`Jumlah melebihi sisa tagihan rekap sebesar ${lebih.toLocaleString('id-ID')}.`);
+      for (const h of hasil) {
+        const o = orders.find(x => x.id === h.orderId)!;
+        const pembayaran = [...o.pembayaran, { id: 'p' + Date.now().toString(36) + h.orderId.slice(0, 4), tanggal, jumlah: h.jumlah, metode: v.metode, ket: [`via ${r.get('nomor')}`, str(v.ket, 200)].filter(Boolean).join(' · '), oleh: me.nama, at: Date.now() }];
+        const dibayar = jumlahBayar(pembayaran), bayar = statusBayar(o.total, dibayar);
+        tx.update(db.doc('orders/' + o.id), { pembayaran, dibayar, bayar, paidAt: bayar === 'Lunas' ? tanggal : null, updatedAt: Date.now() });
+      }
+    });
+  });
+}
+
+/* batalkan rekap (khusus pemilik): order kembali ditagih sendiri-sendiri; pembayaran yang sudah ada tetap */
+export async function batalRekap(rekapId: string): Promise<Result> {
+  return run('owner', async () => {
+    const db = adminDb();
+    await db.runTransaction(async tx => {
+      const ref = db.doc('rekap/' + str(rekapId, 64));
+      const r = await tx.get(ref);
+      if (!r.exists) return;
+      const snaps = await tx.getAll(...((r.get('orderIds') || []) as string[]).map(id => db.doc('orders/' + id)));
+      for (const s of snaps) if (s.exists && s.get('rekapId') === r.id) tx.update(s.ref, { rekapId: '', updatedAt: Date.now() });
+      tx.delete(ref);
+    });
+  });
+}
+
+/* pengingat servis: tandai pelanggan sudah dihubungi (disembunyikan dari daftar ±14 hari) */
+export async function tandaiDiingatkan(pelangganId: string): Promise<Result> {
+  return run('admin', async () => { await adminDb().doc('pelanggan/' + str(pelangganId, 64)).update({ diingatkan: todayWIB() }); });
 }
 
 /* ---------------- pelanggan ---------------- */
@@ -738,6 +816,7 @@ export async function saveSettings(v: Settings): Promise<Result> {
     await adminDb().doc('settings/usaha').set({
       nama: str(v.nama, 120), alamat: str(v.alamat, 300), hp: str(v.hp, 30), jamMasuk, rekening: str(v.rekening, 1000),
       layanan: (v.layanan || []).slice(0, 100).map(l => ({ nama: str(l.nama, 120), harga: Math.max(0, num(l.harga)) })).filter(l => l.nama),
+      templatePengingat: str(v.templatePengingat, 1000),
     });
   });
 }

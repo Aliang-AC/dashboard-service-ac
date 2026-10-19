@@ -12,6 +12,21 @@ export const sisa = (o: Pick<Order, 'total' | 'dibayar'>) => Math.max(0, (+o.tot
 export const ringkasItems = (items: OrderItem[]) =>
   items.map(i => `${i.layanan}${i.qty > 1 ? ' ×' + i.qty : ''}`).join(', ');
 
+/* Pembayaran rekap dibagi ke order-order di dalamnya, mulai dari yang paling lama, sampai uang habis. */
+export function alokasiBayar(orders: Pick<Order, 'id' | 'tanggal' | 'invoice' | 'total' | 'dibayar'>[], jumlah: number) {
+  let sisaUang = Math.max(0, Math.round(jumlah));
+  const hasil: { orderId: string; jumlah: number }[] = [];
+  for (const o of [...orders].sort((a, b) => (a.tanggal + a.invoice).localeCompare(b.tanggal + b.invoice))) {
+    if (sisaUang <= 0) break;
+    const kurang = sisa(o);
+    if (kurang <= 0) continue;
+    const bayar = Math.min(kurang, sisaUang);
+    hasil.push({ orderId: o.id, jumlah: bayar });
+    sisaUang -= bayar;
+  }
+  return { hasil, lebih: sisaUang };
+}
+
 /* Order lama (satu layanan, teknisi tunggal, bayar Lunas/Belum lunas) → bentuk baru. Order baru dilewatkan apa adanya. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function normOrder(raw: any): Order {
@@ -32,7 +47,7 @@ export function normOrder(raw: any): Order {
     teknisi, items, parts, diskon: +o.diskon || 0, total,
     status: o.status, ket: o.ket || '',
     pembayaran, dibayar, bayar: statusBayar(total, dibayar), jatuhTempo: o.jatuhTempo || o.tanggal,
-    foto: Array.isArray(o.foto) ? o.foto : [], catatanTeknisi: o.catatanTeknisi || '',
+    foto: Array.isArray(o.foto) ? o.foto : [], catatanTeknisi: o.catatanTeknisi || '', rekapId: o.rekapId || '',
     invoice: o.invoice || '', createdAt: o.createdAt || 0, updatedAt: o.updatedAt || 0, paidAt: o.paidAt || null,
   };
 }

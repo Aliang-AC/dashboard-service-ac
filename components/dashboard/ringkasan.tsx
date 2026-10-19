@@ -6,6 +6,7 @@ import { ringkasItems, sisa } from '@/lib/order';
 import type { AllData } from '@/lib/types';
 import { useDash, type Tab } from './ctx';
 import { namaTeknisi } from './order';
+import { perluDiingatkan } from './pelanggan';
 
 function Kpi({ lab, val, note, alert }: { lab: string; val: React.ReactNode; note: string; alert?: boolean }) {
   return (
@@ -31,8 +32,16 @@ export function Ringkasan() {
   const recs = absToday(d), kar = activeKar(d);
   const hadir = kar.filter(k => recs[k.id]?.status === 'Hadir').length;
   const resched = d.orders.filter(o => o.status === 'Jadwal ulang');
+  /* order instansi dari bulan-bulan sebelumnya yang belum lunas & belum masuk rekap */
+  const instansi = new Set(d.pelanggan.filter(p => p.jenis === 'Instansi').map(p => p.id));
+  const belumRekap = new Map<string, { nama: string; n: number }>();
+  d.orders.filter(o => instansi.has(o.pelangganId) && monthKey(o.tanggal) < m && o.status !== 'Batal' && !o.rekapId && o.bayar !== 'Lunas')
+    .forEach(o => { const x = belumRekap.get(o.pelangganId) || { nama: o.pelanggan, n: 0 }; x.n++; belumRekap.set(o.pelangganId, x); });
+  const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
 
   const attention: { k: string; t: string; m: string; go: Tab }[] = [
+    ...[...belumRekap.values()].map(x => ({ k: 'warn', t: `Belum direkap: ${x.nama}`, m: `${x.n} order bulan lalu belum ditagih lewat rekap bulanan`, go: 'invoice' as Tab })),
+    ...(nIngat ? [{ k: 'warn', t: `Waktunya servis: ${nIngat} pelanggan`, m: 'Kirim pengingat cuci AC lewat WhatsApp', go: 'pelanggan' as Tab }] : []),
     ...dueNotes(d).map(n => ({ k: n.tanggal < t ? 'bad' : 'warn', t: `${n.tanggal < t ? 'Terlambat' : 'Hari ini'}: ${n.judul}`, m: n.tipe, go: 'catatan' as Tab })),
     ...resched.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${ringkasItems(o.items)} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
     ...lewatTempo.map(o => ({ k: 'bad', t: `Lewat jatuh tempo: ${o.pelanggan}`, m: `${o.invoice} · sisa ${rp(sisa(o))} · tempo ${fmtD(o.jatuhTempo)}`, go: 'invoice' as Tab })),

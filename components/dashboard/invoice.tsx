@@ -9,8 +9,30 @@ import { METODE, type Metode, type Order, type Settings } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { BayarPill } from './order';
+import { RekapView } from './rekap';
 
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+export const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/* dokumen HTML mandiri untuk cetak/PDF & unduh (dipakai invoice per order dan rekap bulanan) */
+const PRINT_CSS = `body{font:14px/1.5 Arial,sans-serif;color:#1b1b1b;max-width:760px;margin:24px auto;padding:0 20px}.ph{display:flex;justify-content:space-between;gap:16px;border-bottom:3px solid #b4572b;padding-bottom:12px;margin-bottom:14px}h4{margin:0;font-size:22px;color:#1d5652}.big{font-size:26px;font-weight:700;letter-spacing:.06em;color:#b4572b;text-align:right}.mono{font-family:Consolas,monospace}.pmuted{color:#666}table{width:100%;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid #e3e3e3;text-align:left}th{background:#f2f4f3;font-size:12px;text-transform:uppercase;color:#555}.r{text-align:right}.tot td{font-weight:700;font-size:16px}.stamp{display:inline-block;border:2px solid currentColor;padding:2px 10px;border-radius:4px;font-weight:700;letter-spacing:.08em;transform:rotate(-4deg)}@media print{body{margin:0}}`;
+export const dokumenHtml = (judul: string, isi: string, print: boolean) =>
+  `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(judul)}</title><style>${PRINT_CSS}</style></head><body>${isi}${print ? '<script>addEventListener("load",()=>{print()})</script>' : ''}</body></html>`;
+export function cetakHtml(judul: string, isi: string) {
+  const w = window.open('', '_blank');
+  if (!w) return toast.error('Jendela cetak diblokir browser. Izinkan pop-up lalu coba lagi.');
+  w.document.write(dokumenHtml(judul, isi, true));
+  w.document.close();
+}
+export function unduhHtml(judul: string, isi: string) {
+  const url = URL.createObjectURL(new Blob([dokumenHtml(judul, isi, false)], { type: 'text/html' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `${judul.replace(/\//g, '-')}.html`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export async function salinWa(txt: string, fallback: () => void) {
+  try { await navigator.clipboard.writeText(txt); toast.success('Teks disalin. Tempel di WhatsApp.'); }
+  catch { fallback(); }
+}
 
 /* Satu sumber HTML invoice: dipakai untuk pratinjau, cetak/PDF, dan unduhan. */
 function invoiceInner(o: Order, st: Settings) {
@@ -37,11 +59,6 @@ function invoiceInner(o: Order, st: Settings) {
   <p class="pmuted" style="margin:16px 0 0">Terima kasih telah menggunakan jasa kami.</p>`;
 }
 
-function invoiceFile(o: Order, st: Settings, print: boolean) {
-  const css = `body{font:14px/1.5 Arial,sans-serif;color:#1b1b1b;max-width:760px;margin:24px auto;padding:0 20px}.ph{display:flex;justify-content:space-between;gap:16px;border-bottom:3px solid #b4572b;padding-bottom:12px;margin-bottom:14px}h4{margin:0;font-size:22px;color:#1d5652}.big{font-size:26px;font-weight:700;letter-spacing:.06em;color:#b4572b;text-align:right}.mono{font-family:Consolas,monospace}.pmuted{color:#666}table{width:100%;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid #e3e3e3;text-align:left}th{background:#f2f4f3;font-size:12px;text-transform:uppercase;color:#555}.r{text-align:right}.tot td{font-weight:700;font-size:16px}.stamp{display:inline-block;border:2px solid currentColor;padding:2px 10px;border-radius:4px;font-weight:700;letter-spacing:.08em;transform:rotate(-4deg)}@media print{body{margin:0}}`;
-  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${esc(o.invoice)}</title><style>${css}</style></head><body>${invoiceInner(o, st)}${print ? '<script>addEventListener("load",()=>{print()})</script>' : ''}</body></html>`;
-}
-
 function waText(o: Order, st: Settings) {
   let t = `*INVOICE ${o.invoice}*\n${st.nama || ''}\nTanggal: ${fmtLong(o.tanggal)}\nPelanggan: ${o.pelanggan}\n\n`;
   o.items.forEach(i => (t += `- ${i.layanan}${i.unit ? ' (' + i.unit + ')' : ''}${i.qty > 1 ? ' ' + i.qty + ' unit' : ''}: ${rp(i.qty * i.harga)}\n`));
@@ -57,11 +74,10 @@ function waText(o: Order, st: Settings) {
   return t + `\nTerima kasih 🙏`;
 }
 
-const fileName = (o: Order) => o.invoice.replace(/\//g, '-');
-
 export function InvoiceView() {
   const { d, run, open, invSel, setInvSel } = useDash();
   const [filter, setFilter] = useState<'Belum lunas' | 'Lunas' | 'Semua'>(invSel ? 'Semua' : 'Belum lunas');
+  const [mode, setMode] = useState<'order' | 'rekap'>('order');
   const t = d.today;
   let list = d.orders.filter(o => o.status !== 'Batal');
   if (filter === 'Belum lunas') list = list.filter(o => o.bayar !== 'Lunas').sort((a, b) => a.jatuhTempo.localeCompare(b.jatuhTempo));
@@ -75,23 +91,9 @@ export function InvoiceView() {
   const lewat = piutang.filter(o => o.jatuhTempo < t);
   const st = d.settings;
 
-  const copyWa = async (o: Order) => {
-    const txt = waText(o, st);
-    try { await navigator.clipboard.writeText(txt); toast.success('Teks invoice disalin. Tempel di WhatsApp.'); }
-    catch { open({ kind: 'text', title: 'Salin teks invoice', text: txt }); }
-  };
-  const printInv = (o: Order) => {
-    const w = window.open('', '_blank');
-    if (!w) return toast.error('Jendela cetak diblokir browser. Izinkan pop-up lalu coba lagi.');
-    w.document.write(invoiceFile(o, st, true));
-    w.document.close();
-  };
-  const download = (o: Order) => {
-    const url = URL.createObjectURL(new Blob([invoiceFile(o, st, false)], { type: 'text/html' }));
-    const a = document.createElement('a');
-    a.href = url; a.download = `${fileName(o)}.html`; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
+  const copyWa = (o: Order) => { const txt = waText(o, st); salinWa(txt, () => open({ kind: 'text', title: 'Salin teks invoice', text: txt })); };
+  const printInv = (o: Order) => cetakHtml(o.invoice, invoiceInner(o, st));
+  const download = (o: Order) => unduhHtml(o.invoice, invoiceInner(o, st));
 
   return (
     <>
@@ -104,18 +106,25 @@ export function InvoiceView() {
       </div>
       <div className="toolbar">
         <div className="seg">
-          {(['Belum lunas', 'Lunas', 'Semua'] as const).map(x => (
-            <button key={x} aria-pressed={filter === x} onClick={() => { setFilter(x); setInvSel(null); }}>{x}</button>
-          ))}
+          <button aria-pressed={mode === 'order'} onClick={() => setMode('order')}>Per order</button>
+          <button aria-pressed={mode === 'rekap'} onClick={() => setMode('rekap')}>Rekap bulanan instansi{d.rekap.length ? ` · ${d.rekap.length}` : ''}</button>
         </div>
+        {mode === 'order' && (
+          <div className="seg">
+            {(['Belum lunas', 'Lunas', 'Semua'] as const).map(x => (
+              <button key={x} aria-pressed={filter === x} onClick={() => { setFilter(x); setInvSel(null); }}>{x}</button>
+            ))}
+          </div>
+        )}
       </div>
-      <div className="inv-layout">
+      {mode === 'rekap' ? <RekapView /> : <div className="inv-layout">
         <div className="panel inv-list">
           {list.length ? list.map(o => {
             const telat = o.bayar !== 'Lunas' && o.jatuhTempo < t;
             return (
               <button key={o.id} className="row" aria-current={sel?.id === o.id} onClick={() => setInvSel(o.id)} style={telat ? { background: 'var(--bad-soft)' } : undefined}>
                 <div style={{ minWidth: 0 }}><b>{o.pelanggan}</b><div className="sm mono">{o.invoice} · {fmtD(o.tanggal)}</div>
+                  {o.rekapId && <div className="sm">dalam rekap {d.rekap.find(r => r.id === o.rekapId)?.nomor || ''}</div>}
                   {o.bayar !== 'Lunas' && <div className="sm" style={telat ? { color: 'var(--bad)', fontWeight: 600 } : undefined}>Jatuh tempo {fmtD(o.jatuhTempo)}</div>}</div>
                 <div style={{ textAlign: 'right' }}><div className="num">{rp(o.bayar === 'Lunas' ? o.total : sisa(o))}</div><BayarPill o={o} today={t} /></div>
               </button>
@@ -156,7 +165,7 @@ export function InvoiceView() {
             </>
           )}
         </div>
-      </div>
+      </div>}
     </>
   );
 }

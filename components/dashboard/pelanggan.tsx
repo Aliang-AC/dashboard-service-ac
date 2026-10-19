@@ -1,9 +1,9 @@
 'use client';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { hapusPelanggan, savePelanggan } from '@/app/actions';
+import { hapusPelanggan, savePelanggan, tandaiDiingatkan } from '@/app/actions';
 import { STATUS_CLS } from '@/lib/derive';
-import { fmtD, rp } from '@/lib/format';
+import { addDays, fmtD, fmtLong, rp, waNumber } from '@/lib/format';
 import { ringkasItems, sisa } from '@/lib/order';
 import { JENIS_PELANGGAN, type AllData, type Pelanggan, type UnitAC } from '@/lib/types';
 import { formObj, useDash } from './ctx';
@@ -27,13 +27,63 @@ export function infoServis(d: AllData, p: Pelanggan) {
   return { os, terakhir, berikut, piutang };
 }
 
+/* Pengingat servis: jatuh tempo servis ≤ 7 hari lagi (atau lewat), belum ada jadwal ke depan,
+   dan belum dihubungi dalam 14 hari terakhir. */
+export function perluDiingatkan(d: AllData, p: Pelanggan) {
+  const i = infoServis(d, p);
+  if (!i.berikut || i.berikut > addDays(d.today, 7)) return false;
+  if (p.diingatkan && p.diingatkan >= addDays(d.today, -14)) return false;
+  if (i.os.some(o => o.tanggal >= d.today && (o.status === 'Terjadwal' || o.status === 'Jadwal ulang'))) return false;
+  return true;
+}
+export const TEMPLATE_PENGINGAT = 'Halo {nama}, kami dari {usaha}. Servis AC terakhir pada {terakhir}, sudah waktunya dibersihkan lagi supaya tetap dingin dan hemat listrik. Mau kami jadwalkan minggu ini? 🙏';
+export function pesanPengingat(d: AllData, p: Pelanggan) {
+  const i = infoServis(d, p);
+  return (d.settings.templatePengingat || TEMPLATE_PENGINGAT)
+    .replace(/\{nama\}/g, p.nama).replace(/\{usaha\}/g, d.settings.nama || 'kami')
+    .replace(/\{terakhir\}/g, i.terakhir ? fmtLong(i.terakhir) : '-')
+    .replace(/\{unit\}/g, (p.units || []).map(u => u.label).join(', ') || 'AC');
+}
+
+function Pengingat() {
+  const { d, open, run } = useDash();
+  const rows = d.pelanggan.filter(p => perluDiingatkan(d, p)).map(p => ({ p, ...infoServis(d, p) })).sort((a, b) => a.berikut.localeCompare(b.berikut));
+  if (!rows.length) return <div className="panel empty"><b>Belum ada yang perlu diingatkan</b>Pelanggan muncul di sini 7 hari sebelum jadwal servis berikutnya (servis terakhir + interval bulan).</div>;
+  return (
+    <div className="tablebox">
+      <table>
+        <thead><tr><th>Pelanggan</th><th>Servis terakhir</th><th>Waktunya</th><th></th></tr></thead>
+        <tbody>
+          {rows.map(({ p, terakhir, berikut }) => (
+            <tr key={p.id} style={berikut < d.today ? { background: 'var(--warn-soft)' } : undefined}>
+              <td><b>{p.nama}</b><div className="sm">{p.hp}{p.units?.length ? ' · ' + p.units.map(u => u.label).join(', ') : ''}</div></td>
+              <td className="num">{fmtD(terakhir)}</td>
+              <td className="num"><span className={`pill ${berikut < d.today ? 'bad' : 'warn'}`}>{berikut < d.today ? 'Lewat · ' : ''}{fmtD(berikut)}</span></td>
+              <td>
+                <span className="actions">
+                  {waNumber(p.hp)
+                    ? <Button size="sm" nativeButton={false} render={<a href={`https://wa.me/${waNumber(p.hp)}?text=${encodeURIComponent(pesanPengingat(d, p))}`} target="_blank" rel="noopener noreferrer" />}>Kirim WA</Button>
+                    : <span className="sm">tanpa no. HP</span>}
+                  <Button size="sm" variant="outline" onClick={() => run(tandaiDiingatkan(p.id), `${p.nama} ditandai sudah dihubungi`)}>Sudah dihubungi</Button>
+                  <Button size="sm" variant="outline" onClick={() => open({ kind: 'order', pelangganId: p.id })}>+ Order</Button>
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function PelangganView() {
   const { d, open } = useDash();
   const [q, setQ] = useState('');
-  const [jenis, setJenis] = useState<'Semua' | Pelanggan['jenis']>('Semua');
+  const [jenis, setJenis] = useState<'Semua' | Pelanggan['jenis'] | 'Pengingat'>('Semua');
+  const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
   const qq = q.trim().toLowerCase();
   const rows = d.pelanggan
-    .filter(p => jenis === 'Semua' || p.jenis === jenis)
+    .filter(p => jenis === 'Semua' || jenis === 'Pengingat' || p.jenis === jenis)
     .filter(p => !qq || [p.nama, p.hp, p.alamat].join(' ').toLowerCase().includes(qq))
     .map(p => ({ p, ...infoServis(d, p) }))
     .sort((a, b) => b.piutang - a.piutang || a.p.nama.localeCompare(b.p.nama));
@@ -47,10 +97,11 @@ export function PelangganView() {
       <div className="toolbar">
         <div className="seg">
           {(['Semua', ...JENIS_PELANGGAN] as const).map(j => <button key={j} aria-pressed={jenis === j} onClick={() => setJenis(j)}>{j}</button>)}
+          <button aria-pressed={jenis === 'Pengingat'} onClick={() => setJenis('Pengingat')}>Waktunya servis{nIngat ? ` · ${nIngat}` : ''}</button>
         </div>
-        <input type="search" className="field" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari nama, no. HP, alamat…" />
+        {jenis !== 'Pengingat' && <input type="search" className="field" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari nama, no. HP, alamat…" />}
       </div>
-      {rows.length ? (
+      {jenis === 'Pengingat' ? <Pengingat /> : rows.length ? (
         <div className="tablebox">
           <table>
             <thead><tr><th>Pelanggan</th><th>Jenis</th><th className="r">Order</th><th>Servis terakhir</th><th>Servis berikutnya</th><th className="r">Sisa tagihan</th><th></th></tr></thead>

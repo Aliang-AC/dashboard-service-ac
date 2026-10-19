@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { backupNow, saveLokasi, saveSettings, setDriveFoto } from '@/app/actions';
 import { layanan } from '@/lib/derive';
 import { formObj, useDash } from './ctx';
+import { TEMPLATE_PENGINGAT } from './pelanggan';
 
 /* Tab ini hanya tampil untuk pemilik. */
 export function Pengaturan() {
@@ -27,7 +28,7 @@ export function Pengaturan() {
             return i > 0 ? { nama: l.slice(0, i).trim(), harga: +l.slice(i + 1).replace(/[^\d]/g, '') || 0 } : { nama: l, harga: 0 };
           });
           setBusy(true);
-          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, rekening: f.rekening, layanan: lay }), 'Pengaturan tersimpan');
+          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, rekening: f.rekening, layanan: lay, templatePengingat: f.templatePengingat }), 'Pengaturan tersimpan');
           setBusy(false);
         }}>
         <div className="grid2">
@@ -41,6 +42,10 @@ export function Pengaturan() {
           </label>
         </div>
         <p className="hint">Satu layanan per baris, format <span className="mono">Nama = harga</span>. Contoh: <span className="mono">Cuci AC 1/2–1 PK = 75000</span>. Tarif otomatis terisi di order dan bisa diubah per order.</p>
+        <label className="lbl">Pesan WhatsApp pengingat servis
+          <textarea className="field" name="templatePengingat" style={{ minHeight: 90 }} defaultValue={st.templatePengingat || TEMPLATE_PENGINGAT} />
+        </label>
+        <p className="hint">Kata yang otomatis diganti: <span className="mono">{'{nama}'}</span> nama pelanggan, <span className="mono">{'{usaha}'}</span> nama usaha, <span className="mono">{'{terakhir}'}</span> tanggal servis terakhir, <span className="mono">{'{unit}'}</span> daftar unit AC.</p>
         <div><Button type="submit" disabled={busy}>{busy ? 'Menyimpan…' : 'Simpan pengaturan'}</Button></div>
       </form>
 
