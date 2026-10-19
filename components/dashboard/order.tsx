@@ -8,6 +8,7 @@ import { hitungTotal, ringkasItems, sisa } from '@/lib/order';
 import { METODE, STATUS, type AllData, type Metode, type Order, type Pelanggan, type Status } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
+import { FotoGaleri } from './tugas';
 
 type Period = 'hari' | 'minggu' | 'bulan' | 'semua';
 
@@ -25,7 +26,7 @@ export function BayarPill({ o, today }: { o: Order; today: string }) {
 
 /* karyawan: hanya jadwal miliknya, tanpa angka uang (sudah disaring di server) */
 function JadwalSaya() {
-  const { d } = useDash();
+  const { d, open } = useDash();
   const list = d.orders.filter(o => o.status !== 'Batal' && o.tanggal >= addDays(d.today, -7))
     .sort((a, b) => (a.tanggal + (a.jam || '99')).localeCompare(b.tanggal + (b.jam || '99')));
   return (
@@ -41,7 +42,11 @@ function JadwalSaya() {
                 {o.items.map((i, n) => <div key={n} className="meta">• {i.layanan}{i.qty > 1 ? ` ×${i.qty}` : ''}{i.unit ? ` — ${i.unit}` : ''}</div>)}
                 <div className="meta">{o.alamat}{o.hp ? ' · ' + o.hp : ''}</div>
                 {o.ket && <div className="meta">{o.ket}</div>}
-                {o.alamat && <a className="linkbtn" href={mapsUrl(o.alamat)} target="_blank" rel="noopener noreferrer">Buka di Google Maps</a>}
+                <div className="actions" style={{ marginTop: 6 }}>
+                  <Button size="sm" onClick={() => open({ kind: 'tugas', id: o.id })}>Buka tugas</Button>
+                  {o.alamat && <a className="linkbtn" href={mapsUrl(o.alamat)} target="_blank" rel="noopener noreferrer">📍 Maps</a>}
+                  {o.foto.length > 0 && <span className="sm">📷 {o.foto.length} foto</span>}
+                </div>
               </div>
               <span className={`pill ${STATUS_CLS[o.status] || ''}`}>{o.status}</span>
             </li>
@@ -295,6 +300,8 @@ export function OrderDialog({ id, onClose, pelangganId }: { id?: string; onClose
         <label className="lbl">Jatuh tempo bayar<input className="field" type="date" value={jatuhTempo} min={tanggal} onChange={e => setJatuhTempo(e.target.value)} /></label>
         <label className="lbl span2">Catatan pekerjaan<textarea className="field" name="ket" defaultValue={o?.ket || ''} placeholder="mis. kapasitor outdoor diganti, freon tekanan normal" /></label>
       </div>
+      {o?.catatanTeknisi && <fieldset className="box"><legend>Laporan teknisi</legend><p className="sm" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{o.catatanTeknisi}</p></fieldset>}
+      {o && <FotoGaleri o={o} bisaTambah />}
       <div className="total-line"><span>Total</span><strong>{rp(total)}</strong></div>
     </FormDialog>
   );

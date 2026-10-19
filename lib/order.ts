@@ -32,6 +32,7 @@ export function normOrder(raw: any): Order {
     teknisi, items, parts, diskon: +o.diskon || 0, total,
     status: o.status, ket: o.ket || '',
     pembayaran, dibayar, bayar: statusBayar(total, dibayar), jatuhTempo: o.jatuhTempo || o.tanggal,
+    foto: Array.isArray(o.foto) ? o.foto : [], catatanTeknisi: o.catatanTeknisi || '',
     invoice: o.invoice || '', createdAt: o.createdAt || 0, updatedAt: o.updatedAt || 0, paidAt: o.paidAt || null,
   };
 }

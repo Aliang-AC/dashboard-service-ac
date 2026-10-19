@@ -8,12 +8,13 @@ import { adminDb } from '@/lib/firebase-admin';
 import { atLeast, requireMe } from '@/lib/access';
 import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
+import { buangFoto, cekDrive, fotoAktif, uploadFoto } from '@/lib/drive';
 import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
 import { hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
   STATUS, ABS_ST, METODE, JENIS_PELANGGAN, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
-  type Pembayaran, type Metode, type Pelanggan, type UnitAC,
+  type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
 } from '@/lib/types';
 
@@ -53,9 +54,9 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     const db = adminDb();
     const docs = <T,>(s: FirebaseFirestore.QuerySnapshot) => s.docs.map(d => ({ id: d.id, ...d.data() }) as T);
     const staff = atLeast(me.peran, 'admin');
-    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, lokasi, backup, pelanggan] = await Promise.all([
+    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, lokasi, backup, pelanggan, adaFoto] = await Promise.all([
       db.collection('orders').orderBy('createdAt', 'desc').limit(1000).get(),
-      staff ? db.collection('stok').get() : null,
+      db.collection('stok').get(),
       staff ? db.collection('mutasi').orderBy('createdAt', 'desc').limit(50).get() : null,
       db.collection('karyawan').get(),
       db.collection('absensi').orderBy('tanggal', 'desc').limit(70).get(),
@@ -64,10 +65,11 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       getLokasi(),
       me.peran === 'owner' ? db.doc('settings/backup').get() : null,
       staff ? db.collection('pelanggan').get() : null,
+      fotoAktif(),
     ]);
     const arsipId = me.peran === 'owner' ? (await db.doc('settings/arsip').get()).get('absensiSheetId') : null;
 
-    let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = stok ? docs<Stok>(stok) : [], k = docs<Karyawan>(karyawan);
+    let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
     let a = docs<Absensi>(absensi), c = docs<Catatan>(catatan);
     let st = (settings.data() as Settings) || {};
     const lok: Lokasi | null = staff ? lokasi : null;
@@ -83,11 +85,13 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       k = k.filter(x => x.id === kid).map(x => ({ ...x, akun: x.akun }));
       a = a.map(d => ({ ...d, records: d.records?.[kid] ? { [kid]: d.records[kid] } : {} }));
       c = c.filter(x => !x.untuk || x.untuk === kid);
-      st = { nama: st.nama, jamMasuk: st.jamMasuk };
+      /* untuk laporan teknisi: nama layanan & barang stok saja, tanpa harga */
+      s = s.map(x => ({ ...x, hargaBeli: null, hargaJual: 0 }));
+      st = { nama: st.nama, jamMasuk: st.jamMasuk, layanan: (st.layanan || []).map(l => ({ nama: l.nama, harga: 0 })) };
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
-      pelanggan: pelanggan ? docs<Pelanggan>(pelanggan) : [],
+      pelanggan: pelanggan ? docs<Pelanggan>(pelanggan) : [], fotoAktif: adaFoto,
       settings: st, lokasi: lok, today: todayWIB(),
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
@@ -201,11 +205,12 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         tanggal, jam, pelangganId: pelRef.id, pelanggan: nama, hp, alamat, teknisi,
         items, parts, diskon, total, status, ket: str(input.ket, 1000),
         pembayaran, dibayar, bayar, jatuhTempo,
+        foto: old?.foto || [], catatanTeknisi: old?.catatanTeknisi || '',
         invoice, createdAt: old?.createdAt || Date.now(), updatedAt: Date.now(),
         paidAt: bayar === 'Lunas' ? old?.paidAt || todayWIB() : null,
       };
       if (!old) tx.set(counterRef, { n: next });
-      tx.set(ref, doc);
+      tx.set(ref, { ...doc, fotoIds: doc.foto.map(f => f.id) }); // fotoIds: indeks untuk cek akses foto
       applyStock(tx, stokSnaps, old, { id: ref.id, ...doc });
     });
   });
@@ -273,6 +278,130 @@ export async function tambahPembayaran(id: string, v: { tanggal: string; jumlah:
 /* hapus catatan pembayaran (salah input) — khusus pemilik */
 export async function hapusPembayaran(id: string, pid: string): Promise<Result> {
   return run('owner', async () => { await ubahPembayaran(id, p => p.filter(x => x.id !== pid)); });
+}
+
+/* ---------------- teknisi di lapangan ---------------- */
+/* karyawan hanya boleh mengubah order yang ia ikut tangani; admin/pemilik semua order */
+function bolehOrder(me: Me, o: Order) {
+  if (me.peran === 'karyawan' && !(me.karyawanId && o.teknisi.includes(me.karyawanId))) throw new UserError('Order ini bukan tugas Anda.');
+}
+const STATUS_TEKNISI: Status[] = ['Dikerjakan', 'Selesai', 'Jadwal ulang'];
+
+export async function teknisiStatus(id: string, status: Status): Promise<Result> {
+  return run('karyawan', async me => {
+    if (!STATUS_TEKNISI.includes(status)) throw new UserError('Status tidak diizinkan.');
+    const db = adminDb();
+    const ref = db.doc('orders/' + str(id, 64));
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new UserError('Order tidak ditemukan.');
+      const old = normOrder({ id: s.id, ...s.data() });
+      bolehOrder(me, old);
+      if (old.status === 'Batal') throw new UserError('Order ini sudah dibatalkan admin.');
+      const stokSnaps = await readStok(tx, old.parts.map(p => p.itemId));
+      tx.update(ref, { status, updatedAt: Date.now() });
+      applyStock(tx, stokSnaps, old, { ...old, status });
+    });
+  });
+}
+
+/* Laporan teknisi: tambah pekerjaan (harga dari tarif), tambah sparepart (harga jual stok), catatan.
+   Harga ditentukan server — teknisi tidak melihat/mengisi harga. */
+export async function teknisiLapor(id: string, v: { items: { layanan: string; unit: string; qty: number }[]; parts: { itemId: string; qty: number }[]; catatan: string }): Promise<Result> {
+  return run('karyawan', async me => {
+    const db = adminDb();
+    const ref = db.doc('orders/' + str(id, 64));
+    const tarif = ((await db.doc('settings/usaha').get()).get('layanan') || []) as { nama: string; harga: number }[];
+    const addItems = (v.items || []).slice(0, 10).map(i => ({ layanan: str(i.layanan, 120), unit: str(i.unit, 120), qty: Math.max(1, Math.round(num(i.qty)) || 1) })).filter(i => i.layanan);
+    const addParts = (v.parts || []).slice(0, 20).map(p => ({ itemId: str(p.itemId, 64), qty: r3(Math.max(0, num(p.qty))) })).filter(p => p.itemId && p.qty > 0);
+    const catatan = str(v.catatan, 1000);
+    if (!addItems.length && !addParts.length && !catatan) throw new UserError('Belum ada yang diisi.');
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new UserError('Order tidak ditemukan.');
+      const old = normOrder({ id: s.id, ...s.data() });
+      bolehOrder(me, old);
+      if (old.status === 'Batal') throw new UserError('Order ini sudah dibatalkan admin.');
+      const stokSnaps = await readStok(tx, [...old.parts.map(p => p.itemId), ...addParts.map(p => p.itemId)]);
+      const items = [...old.items, ...addItems.map(i => ({ ...i, harga: +(tarif.find(t => t.nama === i.layanan)?.harga || 0) }))];
+      const parts: Part[] = old.parts.map(p => ({ ...p }));
+      for (const p of addParts) {
+        const sn = stokSnaps.get(p.itemId);
+        if (!sn?.exists) throw new UserError('Barang stok tidak ditemukan.');
+        const ada = parts.find(x => x.itemId === p.itemId);
+        if (ada) ada.qty = r3(ada.qty + p.qty);
+        else parts.push({ itemId: p.itemId, qty: p.qty, harga: +sn.get('hargaJual') || 0, nama: sn.get('nama') || '', satuan: sn.get('satuan') || '' });
+      }
+      const total = hitungTotal(items, parts, old.diskon);
+      const bayar = statusBayar(total, old.dibayar);
+      const waktu = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'short', timeStyle: 'short' });
+      const catatanTeknisi = catatan ? [old.catatanTeknisi, `[${waktu} · ${me.nama}] ${catatan}`].filter(Boolean).join('\n') : old.catatanTeknisi;
+      const neu = { ...old, items, parts, total, bayar, catatanTeknisi };
+      tx.update(ref, { items, parts, total, bayar, paidAt: bayar === 'Lunas' ? old.paidAt || todayWIB() : null, catatanTeknisi, updatedAt: Date.now() });
+      applyStock(tx, stokSnaps, old, neu);
+    });
+  });
+}
+
+/* ---------------- foto bukti kerja (Google Drive) ---------------- */
+export async function kirimFoto(id: string, jenis: Foto['jenis'], base64: string): Promise<Result> {
+  return run('karyawan', async me => {
+    if (!JENIS_FOTO.includes(jenis)) throw new UserError('Jenis foto tidak dikenal.');
+    const jpeg = Buffer.from(String(base64 || '').replace(/^data:image\/jpeg;base64,/, ''), 'base64');
+    if (jpeg.length < 1000 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new UserError('File foto tidak valid.');
+    if (jpeg.length > 2_500_000) throw new UserError('Foto terlalu besar.');
+    const db = adminDb();
+    const ref = db.doc('orders/' + str(id, 64));
+    const s = await ref.get();
+    if (!s.exists) throw new UserError('Order tidak ditemukan.');
+    const o = normOrder({ id: s.id, ...s.data() });
+    bolehOrder(me, o);
+    if (o.foto.length >= 30) throw new UserError('Maksimal 30 foto per order.');
+    let fileId: string;
+    try {
+      const jam = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Jakarta', hour12: false }).replace(/:/g, '');
+      fileId = await uploadFoto(`${(o.invoice || o.id).replace(/\//g, '-')} ${o.pelanggan.slice(0, 40)} ${jenis} ${todayWIB()} ${jam}.jpg`, todayWIB().slice(0, 7), jpeg);
+    } catch (e) {
+      console.error(e);
+      const m = e instanceof Error ? e.message : '';
+      throw new UserError(m === 'FOTO_BELUM_AKTIF' ? 'Penyimpanan foto belum disambungkan pemilik (Pengaturan → Foto).' : /403|404/.test(m) ? 'Google Drive menolak akses. Pastikan Drive API aktif & akun robot jadi anggota Shared Drive.' : 'Upload foto gagal. Coba lagi.');
+    }
+    const foto: Foto = { id: fileId, jenis, oleh: me.nama, olehUid: me.uid, at: Date.now() };
+    await ref.update({ foto: FieldValue.arrayUnion(foto), fotoIds: FieldValue.arrayUnion(fileId), updatedAt: Date.now() });
+  });
+}
+
+/* hapus foto: pengunggahnya (hari yang sama) atau admin/pemilik */
+export async function hapusFoto(id: string, fotoId: string): Promise<Result> {
+  return run('karyawan', async me => {
+    const db = adminDb();
+    const ref = db.doc('orders/' + str(id, 64));
+    const s = await ref.get();
+    if (!s.exists) throw new UserError('Order tidak ditemukan.');
+    const o = normOrder({ id: s.id, ...s.data() });
+    const f = o.foto.find(x => x.id === fotoId);
+    if (!f) return;
+    const sendiri = f.olehUid === me.uid && Date.now() - f.at < 24 * 3600_000;
+    if (!atLeast(me.peran, 'admin') && !sendiri) throw new UserError('Foto hanya bisa dihapus pengunggahnya (hari yang sama) atau admin.');
+    try { await buangFoto(fotoId); } catch (e) { console.error(e); }
+    await ref.update({ foto: o.foto.filter(x => x.id !== fotoId), fotoIds: FieldValue.arrayRemove(fotoId), updatedAt: Date.now() });
+  });
+}
+
+/* pemilik menyambungkan Shared Drive (tempel link folder/drive) */
+export async function setDriveFoto(link: string): Promise<ResultOf<{ nama: string }>> {
+  return guarded('owner', async () => {
+    const m = String(link || '').match(/(?:folders\/|drives\/|^)([A-Za-z0-9_-]{10,})/);
+    if (!m) throw new UserError('Link Shared Drive tidak dikenali.');
+    try {
+      const d = await cekDrive(m[1]);
+      await adminDb().doc('settings/foto').set({ driveId: d.id, nama: d.name, folders: {} });
+      return { nama: d.name };
+    } catch (e) {
+      console.error(e);
+      throw new UserError('Shared Drive tidak bisa dibuka akun robot. Pastikan Drive API aktif dan akun robot sudah jadi Content manager di Shared Drive itu.');
+    }
+  });
 }
 
 /* ---------------- pelanggan ---------------- */

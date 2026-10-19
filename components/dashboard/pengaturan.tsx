@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { backupNow, saveLokasi, saveSettings } from '@/app/actions';
+import { backupNow, saveLokasi, saveSettings, setDriveFoto } from '@/app/actions';
 import { layanan } from '@/lib/derive';
 import { formObj, useDash } from './ctx';
 
@@ -45,6 +45,7 @@ export function Pengaturan() {
       </form>
 
       <LokasiBengkel />
+      <FotoDrive />
       <Backup />
     </>
   );
@@ -82,6 +83,34 @@ function LokasiBengkel() {
         {lat && lng && <Button variant="outline" nativeButton={false} render={<a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noopener noreferrer" />}>Lihat di Google Maps</Button>}
       </div>
       <p className="hint" style={{ marginTop: 8 }}>Tip: kalau pin Google Maps meleset, berdiri di tengah bengkel lalu klik “Pakai lokasi saya sekarang” → Simpan lokasi.</p>
+    </form>
+  );
+}
+
+/* Sambungkan Shared Drive tempat foto bukti kerja disimpan. */
+function FotoDrive() {
+  const { d, run } = useDash();
+  const [busy, setBusy] = useState(false);
+  return (
+    <form className="panel" style={{ maxWidth: 720, marginTop: 16 }}
+      onSubmit={async e => {
+        e.preventDefault();
+        const f = formObj(e.currentTarget);
+        setBusy(true);
+        const r = await setDriveFoto(f.link);
+        await run(Promise.resolve(r.ok ? { ok: true as const } : r), r.ok ? `Tersambung ke Shared Drive “${r.data.nama}”` : undefined);
+        setBusy(false);
+      }}>
+      <h3>Foto bukti kerja {d.fotoAktif ? <span className="pill good">Aktif</span> : <span className="pill warn">Belum disambungkan</span>}</h3>
+      <p className="hint" style={{ marginBottom: 10 }}>
+        Foto sebelum-sesudah dari teknisi disimpan di Shared Drive Google (dikelompokkan per bulan). Akun robot
+        <span className="mono"> firebase-adminsdk-fbsvc@my-dashboard-service-ac.iam.gserviceaccount.com</span> harus jadi <b>Content manager</b> di Shared Drive itu,
+        dan Google Drive API harus aktif.
+      </p>
+      <div className="toolbar">
+        <input className="field" name="link" required placeholder="Tempel link Shared Drive, mis. https://drive.google.com/drive/folders/0A…" style={{ flex: 1, minWidth: 240 }} />
+        <Button type="submit" disabled={busy}>{busy ? 'Mengecek…' : d.fotoAktif ? 'Ganti' : 'Sambungkan'}</Button>
+      </div>
     </form>
   );
 }

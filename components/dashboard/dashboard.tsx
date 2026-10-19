@@ -16,6 +16,7 @@ import { StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
 import { InvoiceView, BayarDialog } from './invoice';
 import { PelangganView, PelangganDialog } from './pelanggan';
+import { TugasDialog } from './tugas';
 import { CatatanView, NoteDialog } from './catatan';
 import { Pengaturan } from './pengaturan';
 import { FormDialog } from './form-dialog';
@@ -127,6 +128,7 @@ export function Dashboard() {
             {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new-' + (modal.pelangganId || '')} id={modal.id} pelangganId={modal.pelangganId} onClose={close} />}
             {modal?.kind === 'pelanggan' && <PelangganDialog key={modal.id || 'new'} id={modal.id} onClose={close} />}
             {modal?.kind === 'bayar' && <BayarDialog id={modal.id} onClose={close} />}
+            {modal?.kind === 'tugas' && <TugasDialog key={modal.id} id={modal.id} onClose={close} />}
             {modal?.kind === 'stok' && <StokDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok-in' && <StokInDialog id={modal.id} adj={modal.adj} onClose={close} />}
             {modal?.kind === 'kar' && <KarDialog id={modal.id} onClose={close} />}

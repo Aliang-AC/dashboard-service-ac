@@ -16,8 +16,12 @@ export type Order = {
   items: OrderItem[]; parts: Part[]; diskon: number; total: number;
   status: Status; ket: string;
   pembayaran: Pembayaran[]; dibayar: number; bayar: BayarStatus; jatuhTempo: string;
+  foto: Foto[]; catatanTeknisi: string;
   invoice: string; createdAt: number; updatedAt: number; paidAt: string | null;
 };
+/* foto bukti kerja; id = id file di Google Drive (Shared Drive) */
+export const JENIS_FOTO = ['Sebelum', 'Sesudah'] as const;
+export type Foto = { id: string; jenis: (typeof JENIS_FOTO)[number]; oleh: string; olehUid: string; at: number };
 /* bayarAwal: hanya untuk order baru — "Lunas" langsung saat dibuat */
 export type OrderInput = {
   tanggal: string; jam: string;
@@ -70,7 +74,7 @@ export type Me = { uid: string; nama: string; login: string; peran: Peran; karya
 
 export type AllData = {
   me: Me;
-  orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[]; pelanggan: Pelanggan[];
+  orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[]; pelanggan: Pelanggan[]; fotoAktif: boolean;
   absensi: Absensi[]; catatan: Catatan[]; settings: Settings; lokasi: Lokasi | null;
   today: string;
   /* hanya diisi untuk pemilik */
