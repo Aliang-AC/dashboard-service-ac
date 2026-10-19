@@ -10,6 +10,7 @@ export type Modal =
   | { kind: 'bayar'; id: string }
   | { kind: 'tugas'; id: string }
   | { kind: 'rekapBaru' }
+  | { kind: 'bagikanForm' }
   | { kind: 'bayarRekap'; id: string }
   | { kind: 'stok'; id?: string }
   | { kind: 'stok-in'; id: string; adj: boolean }

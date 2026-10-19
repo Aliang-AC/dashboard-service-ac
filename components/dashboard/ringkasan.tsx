@@ -38,10 +38,12 @@ export function Ringkasan() {
   d.orders.filter(o => instansi.has(o.pelangganId) && monthKey(o.tanggal) < m && o.status !== 'Batal' && !o.rekapId && o.bayar !== 'Lunas')
     .forEach(o => { const x = belumRekap.get(o.pelangganId) || { nama: o.pelanggan, n: 0 }; x.n++; belumRekap.set(o.pelangganId, x); });
   const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
+  const nBaru = d.pelanggan.filter(p => p.baru).length;
 
   const attention: { k: string; t: string; m: string; go: Tab }[] = [
     ...[...belumRekap.values()].map(x => ({ k: 'warn', t: `Belum direkap: ${x.nama}`, m: `${x.n} order bulan lalu belum ditagih lewat rekap bulanan`, go: 'invoice' as Tab })),
-    ...(nIngat ? [{ k: 'warn', t: `Waktunya servis: ${nIngat} pelanggan`, m: 'Kirim pengingat cuci AC lewat WhatsApp', go: 'pelanggan' as Tab }] : []),
+    ...(nIngat ? [{ k: 'warn', t: `Perlu dihubungi: ${nIngat} konsumen`, m: 'Unit AC-nya sudah waktunya dicuci — kirim pengingat WhatsApp', go: 'pelanggan' as Tab }] : []),
+    ...(nBaru ? [{ k: 'brand', t: `${nBaru} konsumen baru dari form daftar`, m: 'Cek & lengkapi datanya di tab Pelanggan', go: 'pelanggan' as Tab }] : []),
     ...dueNotes(d).map(n => ({ k: n.tanggal < t ? 'bad' : 'warn', t: `${n.tanggal < t ? 'Terlambat' : 'Hari ini'}: ${n.judul}`, m: n.tipe, go: 'catatan' as Tab })),
     ...resched.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${ringkasItems(o.items)} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
     ...lewatTempo.map(o => ({ k: 'bad', t: `Lewat jatuh tempo: ${o.pelanggan}`, m: `${o.invoice} · sisa ${rp(sisa(o))} · tempo ${fmtD(o.jatuhTempo)}`, go: 'invoice' as Tab })),

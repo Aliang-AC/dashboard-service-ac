@@ -5,6 +5,7 @@ import { deleteOrder, saveOrder, setOrderStatus } from '@/app/actions';
 import { activeKar, layanan, STATUS_CLS } from '@/lib/derive';
 import { addDays, fmtD, monthKey, rp } from '@/lib/format';
 import { hitungTotal, ringkasItems, sisa } from '@/lib/order';
+import { labelUnit } from '@/lib/servis';
 import { METODE, STATUS, type AllData, type Metode, type Order, type Pelanggan, type Status } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
@@ -132,7 +133,7 @@ function OrderTable() {
   );
 }
 
-type ItemRow = { key: number; layanan: string; unit: string; qty: string; harga: string };
+type ItemRow = { key: number; layanan: string; unit: string; qty: string; harga: string; unitId?: string };
 type PartRow = { key: number; itemId: string; qty: string; harga: string };
 let rowKey = 0;
 
@@ -169,7 +170,7 @@ export function OrderDialog({ id, onClose, pelangganId }: { id?: string; onClose
 
   /* pekerjaan, teknisi, sparepart */
   const [items, setItems] = useState<ItemRow[]>(o?.items.length
-    ? o.items.map(i => ({ key: ++rowKey, layanan: i.layanan, unit: i.unit, qty: String(i.qty), harga: String(i.harga) }))
+    ? o.items.map(i => ({ key: ++rowKey, layanan: i.layanan, unit: i.unit, qty: String(i.qty), harga: String(i.harga), unitId: i.unitId || '' }))
     : [{ key: ++rowKey, layanan: lay[0]?.nama || '', unit: '', qty: '1', harga: String(tarif(lay[0]?.nama || '') || '') }]);
   const setItem = (key: number, patch: Partial<ItemRow>) => setItems(xs => xs.map(x => (x.key === key ? { ...x, ...patch } : x)));
   const [teknisi, setTeknisi] = useState<string[]>(o?.teknisi || []);
@@ -178,10 +179,10 @@ export function OrderDialog({ id, onClose, pelangganId }: { id?: string; onClose
   const [diskon, setDiskon] = useState(o?.diskon ? String(o.diskon) : '');
   const [bayarAwal, setBayarAwal] = useState<'' | Metode>('');
 
-  const itemsNum = items.map(i => ({ layanan: i.layanan, unit: i.unit, qty: +i.qty || 1, harga: +i.harga || 0 }));
+  const itemsNum = items.map(i => ({ layanan: i.layanan, unit: i.unit, qty: +i.qty || 1, harga: +i.harga || 0, unitId: i.unitId === '__baru' ? '' : i.unitId || '' }));
   const partsNum = parts.filter(p => p.itemId).map(p => ({ itemId: p.itemId, qty: +p.qty || 0, harga: +p.harga || 0, nama: '', satuan: '' }));
   const total = hitungTotal(itemsNum, partsNum, +diskon || 0);
-  const unitOpsi = pel?.units?.map(u => u.label) || [];
+  const unitOpsi = pel?.units?.map(u => labelUnit(u)) || [];
 
   return (
     <FormDialog
@@ -251,7 +252,14 @@ export function OrderDialog({ id, onClose, pelangganId }: { id?: string; onClose
               {lay.map(l => <option key={l.nama}>{l.nama}</option>)}
               {i.layanan && !lay.some(l => l.nama === i.layanan) && <option>{i.layanan}</option>}
             </select>
-            <input className="field" list="unitOpsi" aria-label="Unit AC" value={i.unit} placeholder="Unit, mis. Daikin 1 PK – Kamar" onChange={e => setItem(i.key, { unit: e.target.value })} />
+            {pel?.units?.length && i.unitId !== '__baru'
+              ? <select className="field" aria-label="Unit AC" value={i.unitId && pel.units.some(u => u.id === i.unitId) ? i.unitId : ''}
+                  onChange={e => { const u = pel.units.find(x => x.id === e.target.value); setItem(i.key, e.target.value === '__baru' ? { unitId: '__baru', unit: '' } : { unitId: e.target.value, unit: u ? labelUnit(u) : '' }); }}>
+                  <option value="">— pilih unit —</option>
+                  {pel.units.map(u => <option key={u.id} value={u.id}>{labelUnit(u)}{u.kode ? ` (${u.kode})` : ''}</option>)}
+                  <option value="__baru">+ Unit lain (ketik)…</option>
+                </select>
+              : <input className="field" list="unitOpsi" aria-label="Unit AC" value={i.unit} placeholder="Unit, mis. Kamar depan – Daikin 1 PK" onChange={e => setItem(i.key, { unit: e.target.value, unitId: i.unitId === '__baru' ? '__baru' : '' })} />}
             <input className="field" type="number" min={1} aria-label="Jumlah unit" value={i.qty} onChange={e => setItem(i.key, { qty: e.target.value })} />
             <input className="field" type="number" min={0} step={1000} aria-label="Harga per unit" value={i.harga} placeholder="Harga" onChange={e => setItem(i.key, { harga: e.target.value })} />
             <Button type="button" variant="outline" size="icon" aria-label="Hapus baris" disabled={items.length <= 1} onClick={() => setItems(xs => xs.filter(x => x.key !== i.key))}>×</Button>

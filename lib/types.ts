@@ -1,7 +1,7 @@
 export type Part = { itemId: string; nama: string; satuan: string; qty: number; harga: number };
 
 /* satu baris pekerjaan di order, mis. "Cuci AC 1/2–1 PK" · "Daikin – Kamar depan" × 2 @ 75.000 */
-export type OrderItem = { layanan: string; unit: string; qty: number; harga: number };
+export type OrderItem = { layanan: string; unit: string; qty: number; harga: number; unitId?: string };
 export const METODE = ['Tunai', 'Transfer', 'QRIS'] as const;
 export type Metode = (typeof METODE)[number];
 export type Pembayaran = { id: string; tanggal: string; jumlah: number; metode: Metode; ket: string; oleh: string; at: number };
@@ -37,15 +37,29 @@ export type OrderInput = {
   bayarAwal: Metode | null;
 };
 
-export type UnitAC = { id: string; label: string };
-export const JENIS_PELANGGAN = ['Perorangan', 'Instansi'] as const;
+/* Unit AC di lokasi konsumen. kode = kode unik di stiker QR (mis. GT-0042).
+   servisTerakhir: diisi manual/perkiraan; yang dipakai = yang terbaru antara ini dan order Selesai untuk unit tsb. */
+export const TIPE_AC = ['Split', 'Cassette', 'Standing', 'Split duct', 'Window', 'Lainnya'] as const;
+export type UnitAC = {
+  id: string; kode?: string; label: string;  // label = ruangan/lokasi, mis. "Kamar depan"
+  merk?: string; pk?: string; tipe?: string; tahun?: string;
+  servisTerakhir?: string; perkiraan?: boolean; intervalBulan?: number;
+};
+export const JENIS_PELANGGAN = ['Perorangan', 'Instansi'] as const;  // cara penagihan
+export const TIPE_LOKASI = ['Rumah', 'Kantor', 'Toko', 'Instansi', 'Lainnya'] as const;
+export const HASIL_PENGINGAT = ['Mau', 'Nanti', 'Tidak', 'Nomor salah'] as const;
+export type Pengingat = { hasil: (typeof HASIL_PENGINGAT)[number]; tanggal: string; ulang: string; oleh: string };
 export type Pelanggan = {
   id: string; nama: string; hp: string; alamat: string; maps: string;
   jenis: (typeof JENIS_PELANGGAN)[number];
   tempoHari: number;      // tempo bayar (instansi), 0 = bayar di tempat
-  intervalBulan: number;  // pengingat servis berikutnya
+  intervalBulan: number;  // interval bawaan untuk unit baru
   units: UnitAC[]; catatan: string; createdAt: number;
-  diingatkan?: string; // tanggal terakhir dihubungi untuk pengingat servis
+  patokan?: string; tipeLokasi?: string; sumber?: string;
+  izinPengingat?: boolean;  // default true
+  pengingat?: Pengingat;    // hasil follow-up terakhir
+  baru?: boolean;           // masuk dari form daftar online, belum dicek admin
+  diingatkan?: string;      // (lama) tanggal terakhir dihubungi
 };
 
 /* hargaBeli disembunyikan (null) untuk selain pemilik */

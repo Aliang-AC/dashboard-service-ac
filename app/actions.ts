@@ -11,10 +11,12 @@ import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/
 import { buangFoto, fotoAktif, sambungSkrip, uploadFoto } from '@/lib/drive';
 import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
 import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
+import { labelUnit, tambahBulan } from '@/lib/servis';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
   STATUS, ABS_ST, METODE, JENIS_PELANGGAN, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
   type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO, type Rekap,
+  type Pengingat, HASIL_PENGINGAT, TIPE_LOKASI,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
 } from '@/lib/types';
 
@@ -133,13 +135,33 @@ async function readStok(tx: Transaction, ids: string[]) {
 }
 
 const cleanItems = (items: OrderItem[]) => (items || []).slice(0, 40)
-  .map(i => ({ layanan: str(i.layanan, 120), unit: str(i.unit, 120), qty: Math.max(1, Math.round(num(i.qty)) || 1), harga: Math.max(0, num(i.harga)) }))
+  .map(i => ({ layanan: str(i.layanan, 120), unit: str(i.unit, 120), qty: Math.max(1, Math.round(num(i.qty)) || 1), harga: Math.max(0, num(i.harga)), unitId: str(i.unitId, 20) }))
   .filter(i => i.layanan);
-const unitBaru = (lama: UnitAC[], labels: string[]) => {
-  const ada = new Set(lama.map(u => u.label.toLowerCase()));
-  const tambah = [...new Set(labels.map(l => l.trim()).filter(Boolean))].filter(l => !ada.has(l.toLowerCase()));
-  return [...lama, ...tambah.map(label => ({ id: Math.random().toString(36).slice(2, 10), label }))].slice(0, 60);
-};
+const idAcak = () => Math.random().toString(36).slice(2, 10);
+
+/* Kode unit untuk stiker QR: GT-0001, GT-0002, … (counters/unit). Baca counter dulu (fase baca transaksi),
+   lalu beriKode() mengisi unit yang belum punya kode dan mengembalikan nilai counter baru. */
+const COUNTER_UNIT = () => adminDb().doc('counters/unit');
+function beriKode(units: UnitAC[], n: number) {
+  let next = n;
+  const hasil = units.map(u => (u.kode ? u : { ...u, kode: 'GT-' + String(++next).padStart(4, '0') }));
+  return { units: hasil, n: next };
+}
+
+/* Unit dari baris order: pakai unitId yang dipilih, atau cocokkan label, atau buat unit baru. */
+function sambungUnit(lama: UnitAC[], items: OrderItem[], intervalDefault: number) {
+  const units = [...lama];
+  const hasil = items.map(i => {
+    if (i.unitId && units.some(u => u.id === i.unitId)) return i;
+    const label = i.unit.trim();
+    if (!label) return { ...i, unitId: '' };
+    let u = units.find(x => labelUnitLama(x).toLowerCase() === label.toLowerCase() || x.label.toLowerCase() === label.toLowerCase());
+    if (!u) { u = { id: idAcak(), label, intervalBulan: intervalDefault || 3 }; units.push(u); }
+    return { ...i, unitId: u.id };
+  });
+  return { items: hasil, units: units.slice(0, 60) };
+}
+const labelUnitLama = (u: UnitAC) => labelUnit(u);
 
 export async function saveOrder(id: string | null, input: OrderInput): Promise<Result> {
   return run('admin', async me => {
@@ -176,6 +198,7 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         if (!q.empty) { pSnap = q.docs[0]; pRef = q.docs[0].ref; }
       }
       const pel = pSnap?.exists ? ({ id: pSnap.id, ...pSnap.data() } as Pelanggan) : null;
+      const unitCounter = await tx.get(COUNTER_UNIT());
 
       /* ---- hitung ---- */
       let invoice = old?.invoice || '', next = 0;
@@ -196,15 +219,19 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
 
       /* ---- tulis ---- */
       const pelRef = pRef && pSnap?.exists ? pRef : db.collection('pelanggan').doc();
-      const units = items.map(i => i.unit);
+      /* baris order tersambung ke unit AC konsumen (unit baru dibuat + diberi kode stiker) */
+      const sambung = sambungUnit(pel?.units || [], items, pel?.intervalBulan || 3);
+      const kode = beriKode(sambung.units, unitCounter.get('n') || 0);
+      if (kode.n !== (unitCounter.get('n') || 0)) tx.set(COUNTER_UNIT(), { n: kode.n });
+      const unitKodes = kode.units.map(u => u.kode!).filter(Boolean);
       if (pel) {
-        tx.update(pelRef, { units: unitBaru(pel.units || [], units), ...(hp && !pel.hp ? { hp, hpNorm: normalHp(hp) || '' } : {}), ...(alamat && !pel.alamat ? { alamat } : {}) });
+        tx.update(pelRef, { units: kode.units, unitKodes, ...(hp && !pel.hp ? { hp, hpNorm: normalHp(hp) || '' } : {}), ...(alamat && !pel.alamat ? { alamat } : {}) });
       } else {
-        tx.set(pelRef, { nama, hp, hpNorm: normalHp(hp) || '', alamat, maps: '', jenis: 'Perorangan', tempoHari: 0, intervalBulan: 3, units: unitBaru([], units), catatan: '', createdAt: Date.now() });
+        tx.set(pelRef, { nama, hp, hpNorm: normalHp(hp) || '', alamat, maps: '', jenis: 'Perorangan', tempoHari: 0, intervalBulan: 3, units: kode.units, unitKodes, catatan: '', izinPengingat: true, sumber: 'Order', createdAt: Date.now() });
       }
       const doc: Omit<Order, 'id'> = {
         tanggal, jam, pelangganId: pelRef.id, pelanggan: nama, hp, alamat, teknisi,
-        items, parts, diskon, total, status, ket: str(input.ket, 1000),
+        items: sambung.items, parts, diskon, total, status, ket: str(input.ket, 1000),
         pembayaran, dibayar, bayar, jatuhTempo,
         foto: old?.foto || [], catatanTeknisi: old?.catatanTeknisi || '', rekapId: old?.rekapId || '',
         invoice, createdAt: old?.createdAt || Date.now(), updatedAt: Date.now(),
@@ -479,28 +506,54 @@ export async function batalRekap(rekapId: string): Promise<Result> {
 }
 
 /* pengingat servis: tandai pelanggan sudah dihubungi (disembunyikan dari daftar ±14 hari) */
-export async function tandaiDiingatkan(pelangganId: string): Promise<Result> {
-  return run('admin', async () => { await adminDb().doc('pelanggan/' + str(pelangganId, 64)).update({ diingatkan: todayWIB() }); });
+/* Hasil follow-up pengingat cuci AC:
+   Mau → (buat order) muncul lagi 14 hari kalau belum dijadwalkan · Nanti → 14 hari · Tidak → satu siklus lagi · Nomor salah → pengingat dimatikan */
+export async function catatPengingat(pelangganId: string, hasil: Pengingat['hasil']): Promise<Result> {
+  return run('admin', async me => {
+    if (!HASIL_PENGINGAT.includes(hasil)) throw new UserError('Hasil tidak dikenal.');
+    const ref = adminDb().doc('pelanggan/' + str(pelangganId, 64));
+    const s = await ref.get();
+    if (!s.exists) throw new UserError('Pelanggan tidak ditemukan.');
+    const t = todayWIB();
+    const ulang = hasil === 'Tidak' ? tambahBulan(t, +s.get('intervalBulan') || 3) : hasil === 'Nomor salah' ? '9999-12-31' : addDays(t, 14);
+    await ref.update({ pengingat: { hasil, tanggal: t, ulang, oleh: me.nama }, ...(hasil === 'Nomor salah' ? { izinPengingat: false } : {}) });
+  });
 }
 
 /* ---------------- pelanggan ---------------- */
-type PelangganInput = Omit<Pelanggan, 'id' | 'createdAt'>;
+type PelangganInput = Omit<Pelanggan, 'id' | 'createdAt' | 'pengingat' | 'baru' | 'diingatkan'>;
+const cleanUnit = (u: UnitAC, intervalDefault: number): UnitAC => ({
+  id: str(u.id, 20) || idAcak(), ...(u.kode ? { kode: str(u.kode, 12) } : {}), label: str(u.label, 80),
+  merk: str(u.merk, 40), pk: str(u.pk, 10), tipe: str(u.tipe, 20), tahun: str(u.tahun, 4),
+  servisTerakhir: isDate(str(u.servisTerakhir, 10)) ? str(u.servisTerakhir, 10) : '', perkiraan: !!u.perkiraan,
+  intervalBulan: Math.min(24, Math.max(1, Math.round(num(u.intervalBulan)) || intervalDefault || 3)),
+});
+
 export async function savePelanggan(id: string | null, v: PelangganInput): Promise<ResultOf<{ id: string }>> {
   return guarded('admin', async () => {
     const nama = str(v.nama, 120);
     if (!nama) throw new UserError('Nama pelanggan wajib diisi.');
     const hp = str(v.hp, 30);
-    const doc = {
-      nama, hp, hpNorm: normalHp(hp) || '', alamat: str(v.alamat, 300), maps: str(v.maps, 500),
-      jenis: JENIS_PELANGGAN.includes(v.jenis) ? v.jenis : 'Perorangan',
-      tempoHari: Math.min(365, Math.max(0, Math.round(num(v.tempoHari)))),
-      intervalBulan: Math.min(24, Math.max(1, Math.round(num(v.intervalBulan)) || 3)),
-      units: (v.units || []).slice(0, 60).map(u => ({ id: str(u.id, 20) || Math.random().toString(36).slice(2, 10), label: str(u.label, 120) })).filter(u => u.label),
-      catatan: str(v.catatan, 1000),
-    };
+    const intervalBulan = Math.min(24, Math.max(1, Math.round(num(v.intervalBulan)) || 3));
     const db = adminDb();
-    if (id) { await db.doc('pelanggan/' + str(id, 64)).update(doc); return { id }; }
-    const ref = await db.collection('pelanggan').add({ ...doc, createdAt: Date.now() });
+    const ref = id ? db.doc('pelanggan/' + str(id, 64)) : db.collection('pelanggan').doc();
+    await db.runTransaction(async tx => {
+      const counter = await tx.get(COUNTER_UNIT());
+      if (id && !(await tx.get(ref)).exists) throw new UserError('Pelanggan tidak ditemukan.');
+      const units = (v.units || []).slice(0, 60).map(u => cleanUnit(u, intervalBulan)).filter(u => u.label || u.merk);
+      const kode = beriKode(units, counter.get('n') || 0);
+      if (kode.n !== (counter.get('n') || 0)) tx.set(COUNTER_UNIT(), { n: kode.n });
+      const doc = {
+        nama, hp, hpNorm: normalHp(hp) || '', alamat: str(v.alamat, 300), maps: str(v.maps, 500), patokan: str(v.patokan, 200),
+        jenis: JENIS_PELANGGAN.includes(v.jenis) ? v.jenis : 'Perorangan',
+        tipeLokasi: TIPE_LOKASI.includes(v.tipeLokasi as never) ? v.tipeLokasi : 'Rumah', sumber: str(v.sumber, 60),
+        tempoHari: Math.min(365, Math.max(0, Math.round(num(v.tempoHari)))), intervalBulan,
+        izinPengingat: v.izinPengingat !== false,
+        units: kode.units, unitKodes: kode.units.map(u => u.kode!), catatan: str(v.catatan, 1000),
+        baru: false, // disimpan admin = sudah dicek
+      };
+      if (id) tx.update(ref, doc); else tx.set(ref, { ...doc, createdAt: Date.now() });
+    });
     return { id: ref.id };
   });
 }
