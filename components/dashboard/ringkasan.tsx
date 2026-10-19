@@ -1,9 +1,11 @@
 'use client';
 import { Button } from '@/components/ui/button';
-import { absToday, activeKar, dueNotes, isLow, karName, omzetOrders, STATUS_CLS, unpaid } from '@/lib/derive';
+import { absToday, activeKar, dueNotes, isLow, omzetOrders, STATUS_CLS, unpaid } from '@/lib/derive';
 import { addDays, fmtD, monthKey, rp, short } from '@/lib/format';
+import { ringkasItems, sisa } from '@/lib/order';
 import type { AllData } from '@/lib/types';
 import { useDash, type Tab } from './ctx';
+import { namaTeknisi } from './order';
 
 function Kpi({ lab, val, note, alert }: { lab: string; val: React.ReactNode; note: string; alert?: boolean }) {
   return (
@@ -23,6 +25,8 @@ export function Ringkasan() {
   const sum = (arr: { total: number }[]) => arr.reduce((a, o) => a + (+o.total || 0), 0);
   const jobsToday = d.orders.filter(o => o.tanggal === t && o.status !== 'Batal').sort((a, b) => (a.jam || '99').localeCompare(b.jam || '99'));
   const up = unpaid(d);
+  const sisaSum = up.reduce((a, o) => a + sisa(o), 0);
+  const lewatTempo = d.orders.filter(o => o.status !== 'Batal' && o.bayar !== 'Lunas' && o.jatuhTempo < t);
   const low = d.stok.filter(isLow);
   const recs = absToday(d), kar = activeKar(d);
   const hadir = kar.filter(k => recs[k.id]?.status === 'Hadir').length;
@@ -30,12 +34,13 @@ export function Ringkasan() {
 
   const attention: { k: string; t: string; m: string; go: Tab }[] = [
     ...dueNotes(d).map(n => ({ k: n.tanggal < t ? 'bad' : 'warn', t: `${n.tanggal < t ? 'Terlambat' : 'Hari ini'}: ${n.judul}`, m: n.tipe, go: 'catatan' as Tab })),
-    ...resched.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${o.layanan} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
+    ...resched.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${ringkasItems(o.items)} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
+    ...lewatTempo.map(o => ({ k: 'bad', t: `Lewat jatuh tempo: ${o.pelanggan}`, m: `${o.invoice} · sisa ${rp(sisa(o))} · tempo ${fmtD(o.jatuhTempo)}`, go: 'invoice' as Tab })),
     ...low.map(s => ({ k: (+s.qty || 0) <= 0 ? 'bad' : 'warn', t: `Stok ${(+s.qty || 0) <= 0 ? 'habis' : 'menipis'}: ${s.nama}`, m: `Sisa ${+s.qty || 0} ${s.satuan || ''} · minimum ${+s.min || 0}`, go: 'stok' as Tab })),
   ];
 
   const svcCount: Record<string, number> = {};
-  omMonth.forEach(o => (svcCount[o.layanan] = (svcCount[o.layanan] || 0) + (+o.qtyUnit || 1)));
+  omMonth.forEach(o => o.items.forEach(i => (svcCount[i.layanan] = (svcCount[i.layanan] || 0) + (+i.qty || 1))));
   const svcTop = Object.entries(svcCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
   return (
@@ -51,7 +56,7 @@ export function Ringkasan() {
         {owner && <Kpi lab="Omzet hari ini" val={rp(sum(omToday))} note={`${omToday.length} order selesai`} />}
         {owner && <Kpi lab="Omzet bulan ini" val={rp(sum(omMonth))} note={`${omMonth.length} order selesai`} />}
         <Kpi lab="Jadwal hari ini" val={jobsToday.length} note={`${jobsToday.filter(o => o.status === 'Selesai').length} sudah selesai`} />
-        <Kpi lab="Belum dibayar" val={rp(sum(up))} note={`${up.length} invoice`} alert={up.length > 0} />
+        <Kpi lab="Belum dibayar" val={rp(sisaSum)} note={`${up.length} invoice${lewatTempo.length ? ` · ${lewatTempo.length} lewat tempo` : ''}`} alert={up.length > 0} />
         <Kpi lab="Stok menipis" val={low.length} note={low.length ? 'perlu belanja' : 'stok aman'} alert={low.length > 0} />
         <Kpi lab="Hadir hari ini" val={`${hadir}/${kar.length}`} note={kar.length ? 'karyawan aktif' : 'belum ada karyawan'} />
       </div>
@@ -65,8 +70,8 @@ export function Ringkasan() {
                   <li key={o.id}>
                     <span className="time">{o.jam || '—'}</span>
                     <div className="main">
-                      <b>{o.pelanggan}</b> · {o.layanan}{o.qtyUnit > 1 ? ` (${o.qtyUnit} unit)` : ''}
-                      <div className="meta">{o.alamat}{o.teknisi ? ' · Teknisi: ' + karName(d, o.teknisi) : ''}</div>
+                      <b>{o.pelanggan}</b> · {ringkasItems(o.items)}
+                      <div className="meta">{o.alamat}{o.teknisi.length ? ' · Teknisi: ' + namaTeknisi(d, o.teknisi) : ''}</div>
                     </div>
                     <span className={`pill ${STATUS_CLS[o.status] || ''}`}>{o.status}</span>
                   </li>

@@ -1,16 +1,40 @@
 export type Part = { itemId: string; nama: string; satuan: string; qty: number; harga: number };
 
+/* satu baris pekerjaan di order, mis. "Cuci AC 1/2–1 PK" · "Daikin – Kamar depan" × 2 @ 75.000 */
+export type OrderItem = { layanan: string; unit: string; qty: number; harga: number };
+export const METODE = ['Tunai', 'Transfer', 'QRIS'] as const;
+export type Metode = (typeof METODE)[number];
+export type Pembayaran = { id: string; tanggal: string; jumlah: number; metode: Metode; ket: string; oleh: string; at: number };
+export type BayarStatus = 'Lunas' | 'Sebagian' | 'Belum dibayar';
+
+/* Bentuk order yang dipakai aplikasi (order lama dinormalkan otomatis lewat lib/order.ts → normOrder). */
 export type Order = {
   id: string;
   tanggal: string; jam: string;
-  pelanggan: string; hp: string; alamat: string;
-  teknisi: string; layanan: string; unit: string; qtyUnit: number;
-  jasa: number; parts: Part[]; diskon: number; total: number;
-  status: Status; bayar: 'Lunas' | 'Belum lunas'; metode: string; ket: string;
+  pelangganId: string; pelanggan: string; hp: string; alamat: string;
+  teknisi: string[];
+  items: OrderItem[]; parts: Part[]; diskon: number; total: number;
+  status: Status; ket: string;
+  pembayaran: Pembayaran[]; dibayar: number; bayar: BayarStatus; jatuhTempo: string;
   invoice: string; createdAt: number; updatedAt: number; paidAt: string | null;
 };
-export type OrderInput = Omit<Order, 'id' | 'total' | 'invoice' | 'createdAt' | 'updatedAt' | 'paidAt' | 'parts'> & {
-  parts: { itemId: string; qty: number; harga: number }[];
+/* bayarAwal: hanya untuk order baru — "Lunas" langsung saat dibuat */
+export type OrderInput = {
+  tanggal: string; jam: string;
+  pelangganId: string | null; pelanggan: string; hp: string; alamat: string;
+  teknisi: string[]; items: OrderItem[]; parts: { itemId: string; qty: number; harga: number }[];
+  diskon: number; status: Status; ket: string; jatuhTempo: string;
+  bayarAwal: Metode | null;
+};
+
+export type UnitAC = { id: string; label: string };
+export const JENIS_PELANGGAN = ['Perorangan', 'Instansi'] as const;
+export type Pelanggan = {
+  id: string; nama: string; hp: string; alamat: string; maps: string;
+  jenis: (typeof JENIS_PELANGGAN)[number];
+  tempoHari: number;      // tempo bayar (instansi), 0 = bayar di tempat
+  intervalBulan: number;  // pengingat servis berikutnya
+  units: UnitAC[]; catatan: string; createdAt: number;
 };
 
 /* hargaBeli disembunyikan (null) untuk selain pemilik */
@@ -46,7 +70,7 @@ export type Me = { uid: string; nama: string; login: string; peran: Peran; karya
 
 export type AllData = {
   me: Me;
-  orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[];
+  orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[]; pelanggan: Pelanggan[];
   absensi: Absensi[]; catatan: Catatan[]; settings: Settings; lokasi: Lokasi | null;
   today: string;
   /* hanya diisi untuk pemilik */

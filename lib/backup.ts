@@ -1,7 +1,8 @@
 import 'server-only';
 import { adminDb } from './firebase-admin';
 import { a1, isDefaultTab, sheetsApi } from './sheets';
-import type { Absensi, Catatan, Karyawan, Mutasi, Order, Stok } from './types';
+import { normOrder, sisa, subtotalItems, subtotalParts } from './order';
+import type { Absensi, Catatan, Karyawan, Mutasi, Pelanggan, Stok } from './types';
 
 /* Backup semua data dashboard ke satu Google Sheet (BACKUP_SHEET_ID).
    Ditulis oleh akun robot Firebase (service account) — sheet harus dibagikan ke email akun itu sebagai Editor.
@@ -16,23 +17,32 @@ export const backupSheetUrl = () =>
 async function collect() {
   const db = adminDb();
   const all = async <T,>(name: string) => (await db.collection(name).get()).docs.map(d => ({ id: d.id, ...d.data() }) as T);
-  const [orders, stok, mutasi, karyawan, absensi, catatan] = await Promise.all([
-    all<Order>('orders'), all<Stok>('stok'), all<Mutasi>('mutasi'),
-    all<Karyawan>('karyawan'), all<Absensi>('absensi'), all<Catatan>('catatan'),
+  const [rawOrders, stok, mutasi, karyawan, absensi, catatan, pelanggan] = await Promise.all([
+    all<Record<string, unknown>>('orders'), all<Stok>('stok'), all<Mutasi>('mutasi'),
+    all<Karyawan>('karyawan'), all<Absensi>('absensi'), all<Catatan>('catatan'), all<Pelanggan>('pelanggan'),
   ]);
+  const orders = rawOrders.map(normOrder);
   const nama = (id: string) => karyawan.find(k => k.id === id)?.nama || '';
 
   const tabs: Record<string, Cell[][]> = {
     Order: [
-      ['No. invoice', 'Tanggal', 'Jam', 'Pelanggan', 'HP', 'Alamat', 'Teknisi', 'Layanan', 'Unit AC', 'Jumlah unit',
-        'Biaya jasa', 'Sparepart', 'Total sparepart', 'Diskon', 'Total', 'Status', 'Bayar', 'Metode', 'Tgl lunas', 'Catatan pekerjaan'],
+      ['No. invoice', 'Tanggal', 'Jam', 'Pelanggan', 'HP', 'Alamat', 'Teknisi', 'Pekerjaan', 'Total jasa',
+        'Sparepart', 'Total sparepart', 'Diskon', 'Total', 'Status', 'Bayar', 'Dibayar', 'Sisa', 'Jatuh tempo', 'Pembayaran', 'Tgl lunas', 'Catatan pekerjaan'],
       ...orders
         .sort((a, b) => (a.tanggal + (a.jam || '')).localeCompare(b.tanggal + (b.jam || '')))
         .map(o => [
-          o.invoice, o.tanggal, o.jam, o.pelanggan, o.hp, o.alamat, nama(o.teknisi), o.layanan, o.unit, o.qtyUnit,
-          o.jasa, (o.parts || []).map(p => `${p.nama} ${p.qty} ${p.satuan} x ${p.harga}`).join('; '),
-          (o.parts || []).reduce((a, p) => a + p.qty * p.harga, 0), o.diskon, o.total, o.status, o.bayar, o.metode, o.paidAt || '', o.ket,
+          o.invoice, o.tanggal, o.jam, o.pelanggan, o.hp, o.alamat, o.teknisi.map(nama).filter(Boolean).join(', '),
+          o.items.map(i => `${i.layanan}${i.unit ? ' (' + i.unit + ')' : ''} x${i.qty} @${i.harga}`).join('; '), subtotalItems(o.items),
+          (o.parts || []).map(p => `${p.nama} ${p.qty} ${p.satuan} x ${p.harga}`).join('; '), subtotalParts(o.parts || []),
+          o.diskon, o.total, o.status, o.bayar, o.dibayar, sisa(o), o.jatuhTempo,
+          o.pembayaran.map(p => `${p.tanggal} ${p.metode} ${p.jumlah}`).join('; '), o.paidAt || '', o.ket,
         ]),
+    ],
+    Pelanggan: [
+      ['Nama', 'Jenis', 'HP', 'Alamat', 'Tempo (hari)', 'Servis tiap (bulan)', 'Unit AC', 'Catatan'],
+      ...pelanggan.sort((a, b) => a.nama.localeCompare(b.nama)).map(p => [
+        p.nama, p.jenis, p.hp, p.alamat, p.tempoHari || 0, p.intervalBulan || 3, (p.units || []).map(u => u.label).join('; '), p.catatan || '',
+      ]),
     ],
     Stok: [
       ['Barang', 'Kategori', 'Satuan', 'Sisa', 'Minimum', 'Harga beli', 'Harga jual', 'Nilai stok (modal)'],

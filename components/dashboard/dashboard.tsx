@@ -14,7 +14,8 @@ import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
 import { StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
-import { InvoiceView } from './invoice';
+import { InvoiceView, BayarDialog } from './invoice';
+import { PelangganView, PelangganDialog } from './pelanggan';
 import { CatatanView, NoteDialog } from './catatan';
 import { Pengaturan } from './pengaturan';
 import { FormDialog } from './form-dialog';
@@ -22,7 +23,7 @@ import type { Peran } from '@/lib/types';
 import { APP_NAME } from '@/lib/brand';
 
 const ALL_TABS: [Tab, string][] = [
-  ['ringkasan', 'Ringkasan'], ['order', 'Order & Penjualan'], ['stok', 'Stok'], ['absensi', 'Absensi'],
+  ['ringkasan', 'Ringkasan'], ['order', 'Order & Penjualan'], ['pelanggan', 'Pelanggan'], ['stok', 'Stok'], ['absensi', 'Absensi'],
   ['invoice', 'Invoice'], ['catatan', 'Catatan'], ['pengaturan', 'Pengaturan'],
 ];
 /* tab yang tampil per peran */
@@ -116,13 +117,16 @@ export function Dashboard() {
           <DashCtx.Provider value={ctx}>
             {tab === 'ringkasan' && <Ringkasan />}
             {tab === 'order' && <OrderView />}
+            {tab === 'pelanggan' && <PelangganView />}
             {tab === 'stok' && <StokView />}
             {tab === 'absensi' && <AbsensiView />}
             {tab === 'invoice' && <InvoiceView />}
             {tab === 'catatan' && <CatatanView />}
             {tab === 'pengaturan' && <Pengaturan />}
 
-            {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new'} id={modal.id} onClose={close} />}
+            {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new-' + (modal.pelangganId || '')} id={modal.id} pelangganId={modal.pelangganId} onClose={close} />}
+            {modal?.kind === 'pelanggan' && <PelangganDialog key={modal.id || 'new'} id={modal.id} onClose={close} />}
+            {modal?.kind === 'bayar' && <BayarDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok' && <StokDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok-in' && <StokInDialog id={modal.id} adj={modal.adj} onClose={close} />}
             {modal?.kind === 'kar' && <KarDialog id={modal.id} onClose={close} />}

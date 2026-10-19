@@ -8,10 +8,12 @@ import { adminDb } from '@/lib/firebase-admin';
 import { atLeast, requireMe } from '@/lib/access';
 import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
-import { nowTimeWIB, todayWIB } from '@/lib/format';
+import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
+import { hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
-  STATUS, ABS_ST, type AllData, type Order, type OrderInput, type Part, type Result, type ResultOf, type Me, type Peran,
+  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
+  type Pembayaran, type Metode, type Pelanggan, type UnitAC,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
 } from '@/lib/types';
 
@@ -51,7 +53,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     const db = adminDb();
     const docs = <T,>(s: FirebaseFirestore.QuerySnapshot) => s.docs.map(d => ({ id: d.id, ...d.data() }) as T);
     const staff = atLeast(me.peran, 'admin');
-    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, lokasi, backup] = await Promise.all([
+    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, lokasi, backup, pelanggan] = await Promise.all([
       db.collection('orders').orderBy('createdAt', 'desc').limit(1000).get(),
       staff ? db.collection('stok').get() : null,
       staff ? db.collection('mutasi').orderBy('createdAt', 'desc').limit(50).get() : null,
@@ -61,10 +63,11 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       db.doc('settings/usaha').get(),
       getLokasi(),
       me.peran === 'owner' ? db.doc('settings/backup').get() : null,
+      staff ? db.collection('pelanggan').get() : null,
     ]);
     const arsipId = me.peran === 'owner' ? (await db.doc('settings/arsip').get()).get('absensiSheetId') : null;
 
-    let o = docs<Order>(orders), s = stok ? docs<Stok>(stok) : [], k = docs<Karyawan>(karyawan);
+    let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = stok ? docs<Stok>(stok) : [], k = docs<Karyawan>(karyawan);
     let a = docs<Absensi>(absensi), c = docs<Catatan>(catatan);
     let st = (settings.data() as Settings) || {};
     const lok: Lokasi | null = staff ? lokasi : null;
@@ -73,7 +76,10 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     if (me.peran === 'karyawan') {
       /* karyawan: hanya jadwal miliknya (tanpa angka uang), absensinya sendiri, catatan untuknya / semua */
       const kid = me.karyawanId || '__none__';
-      o = o.filter(x => x.teknisi === kid).map(x => ({ ...x, jasa: 0, diskon: 0, total: 0, parts: x.parts.map(p => ({ ...p, harga: 0 })) }));
+      o = o.filter(x => x.teknisi.includes(kid)).map(x => ({
+        ...x, diskon: 0, total: 0, dibayar: 0, pembayaran: [],
+        items: x.items.map(i => ({ ...i, harga: 0 })), parts: x.parts.map(p => ({ ...p, harga: 0 })),
+      }));
       k = k.filter(x => x.id === kid).map(x => ({ ...x, akun: x.akun }));
       a = a.map(d => ({ ...d, records: d.records?.[kid] ? { [kid]: d.records[kid] } : {} }));
       c = c.filter(x => !x.untuk || x.untuk === kid);
@@ -81,6 +87,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
+      pelanggan: pelanggan ? docs<Pelanggan>(pelanggan) : [],
       settings: st, lokasi: lok, today: todayWIB(),
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
@@ -120,16 +127,28 @@ async function readStok(tx: Transaction, ids: string[]) {
   return new Map(snaps.map(s => [s.id, s]));
 }
 
+const cleanItems = (items: OrderItem[]) => (items || []).slice(0, 40)
+  .map(i => ({ layanan: str(i.layanan, 120), unit: str(i.unit, 120), qty: Math.max(1, Math.round(num(i.qty)) || 1), harga: Math.max(0, num(i.harga)) }))
+  .filter(i => i.layanan);
+const unitBaru = (lama: UnitAC[], labels: string[]) => {
+  const ada = new Set(lama.map(u => u.label.toLowerCase()));
+  const tambah = [...new Set(labels.map(l => l.trim()).filter(Boolean))].filter(l => !ada.has(l.toLowerCase()));
+  return [...lama, ...tambah.map(label => ({ id: Math.random().toString(36).slice(2, 10), label }))].slice(0, 60);
+};
+
 export async function saveOrder(id: string | null, input: OrderInput): Promise<Result> {
-  return run('admin', async () => {
+  return run('admin', async me => {
     const tanggal = str(input.tanggal, 10);
     if (!isDate(tanggal)) throw new UserError('Tanggal tidak valid.');
-    const pelanggan = str(input.pelanggan, 120);
-    if (!pelanggan) throw new UserError('Nama pelanggan wajib diisi.');
+    const nama = str(input.pelanggan, 120);
+    if (!nama) throw new UserError('Nama pelanggan wajib diisi.');
     const status = STATUS.includes(input.status) ? input.status : 'Terjadwal';
-    const bayar = input.bayar === 'Lunas' ? 'Lunas' : 'Belum lunas';
     const jam = str(input.jam, 5);
     if (!isTime(jam)) throw new UserError('Jam tidak valid.');
+    const items = cleanItems(input.items);
+    if (!items.length) throw new UserError('Isi minimal satu pekerjaan.');
+    const teknisi = [...new Set((input.teknisi || []).map(t => str(t, 64)).filter(Boolean))].slice(0, 5);
+    const hp = str(input.hp, 30), alamat = str(input.alamat, 300);
     const rawParts = (input.parts || []).slice(0, 50)
       .map(p => ({ itemId: str(p.itemId, 64), qty: r3(Math.max(0, num(p.qty))), harga: Math.max(0, num(p.harga)) }))
       .filter(p => p.itemId && p.qty > 0);
@@ -137,29 +156,51 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
     const db = adminDb();
     const ref = id ? db.doc('orders/' + id) : db.collection('orders').doc();
     await db.runTransaction(async tx => {
+      /* ---- baca dulu semua ---- */
       const oldSnap = id ? await tx.get(ref) : null;
       if (id && !oldSnap?.exists) throw new UserError('Order tidak ditemukan (mungkin sudah dihapus).');
-      const old = oldSnap ? ({ id: oldSnap.id, ...oldSnap.data() } as Order) : null;
+      const old = oldSnap ? normOrder({ id: oldSnap.id, ...oldSnap.data() }) : null;
       const stokSnaps = await readStok(tx, [...rawParts.map(p => p.itemId), ...(old?.parts || []).map(p => p.itemId)]);
-
-      /* Nomor invoice berurutan per bulan: INV/2026/10/0001 */
-      let invoice = old?.invoice || '';
       const counterRef = db.doc(`counters/inv-${tanggal.slice(0, 7)}`);
-      let next = 0;
-      if (!old) { const c = await tx.get(counterRef); next = (c.get('n') || 0) + 1; invoice = `INV/${tanggal.slice(0, 4)}/${tanggal.slice(5, 7)}/${String(next).padStart(4, '0')}`; }
+      const counter = old ? null : await tx.get(counterRef);
+      /* pelanggan: pakai yang dipilih, atau cari dari nomor HP, atau buat baru */
+      let pRef = input.pelangganId ? db.doc('pelanggan/' + str(input.pelangganId, 64)) : null;
+      let pSnap = pRef ? await tx.get(pRef) : null;
+      if (!pSnap?.exists && normalHp(hp)) {
+        const q = await tx.get(db.collection('pelanggan').where('hpNorm', '==', normalHp(hp)).limit(1));
+        if (!q.empty) { pSnap = q.docs[0]; pRef = q.docs[0].ref; }
+      }
+      const pel = pSnap?.exists ? ({ id: pSnap.id, ...pSnap.data() } as Pelanggan) : null;
 
+      /* ---- hitung ---- */
+      let invoice = old?.invoice || '', next = 0;
+      if (!old) { next = (counter?.get('n') || 0) + 1; invoice = `INV/${tanggal.slice(0, 4)}/${tanggal.slice(5, 7)}/${String(next).padStart(4, '0')}`; }
       const parts: Part[] = rawParts.map(p => {
         const s = stokSnaps.get(p.itemId);
         const prev = old?.parts?.find(x => x.itemId === p.itemId);
         return { ...p, nama: s?.get('nama') || prev?.nama || '', satuan: s?.get('satuan') || prev?.satuan || '' };
       });
-      const jasa = Math.max(0, num(input.jasa)), diskon = Math.max(0, num(input.diskon));
+      const diskon = Math.max(0, num(input.diskon));
+      const total = hitungTotal(items, parts, diskon);
+      const pembayaran: Pembayaran[] = old ? old.pembayaran : [];
+      if (!old && input.bayarAwal && METODE.includes(input.bayarAwal) && total > 0)
+        pembayaran.push({ id: 'p' + Date.now().toString(36), tanggal, jumlah: total, metode: input.bayarAwal, ket: 'Bayar saat order', oleh: me.nama, at: Date.now() });
+      const dibayar = jumlahBayar(pembayaran), bayar = statusBayar(total, dibayar);
+      const tempo = pel?.jenis === 'Instansi' ? Math.max(0, pel.tempoHari || 0) : 0;
+      const jatuhTempo = isDate(str(input.jatuhTempo, 10)) ? str(input.jatuhTempo, 10) : addDays(tanggal, tempo);
+
+      /* ---- tulis ---- */
+      const pelRef = pRef && pSnap?.exists ? pRef : db.collection('pelanggan').doc();
+      const units = items.map(i => i.unit);
+      if (pel) {
+        tx.update(pelRef, { units: unitBaru(pel.units || [], units), ...(hp && !pel.hp ? { hp, hpNorm: normalHp(hp) || '' } : {}), ...(alamat && !pel.alamat ? { alamat } : {}) });
+      } else {
+        tx.set(pelRef, { nama, hp, hpNorm: normalHp(hp) || '', alamat, maps: '', jenis: 'Perorangan', tempoHari: 0, intervalBulan: 3, units: unitBaru([], units), catatan: '', createdAt: Date.now() });
+      }
       const doc: Omit<Order, 'id'> = {
-        tanggal, jam, pelanggan, hp: str(input.hp, 30), alamat: str(input.alamat, 300),
-        teknisi: str(input.teknisi, 64), layanan: str(input.layanan, 120), unit: str(input.unit, 120),
-        qtyUnit: Math.max(1, Math.round(num(input.qtyUnit)) || 1),
-        jasa, parts, diskon, total: Math.max(0, jasa + parts.reduce((a, p) => a + p.qty * p.harga, 0) - diskon),
-        status, bayar, metode: ['Tunai', 'Transfer', 'QRIS'].includes(input.metode) ? input.metode : '', ket: str(input.ket, 1000),
+        tanggal, jam, pelangganId: pelRef.id, pelanggan: nama, hp, alamat, teknisi,
+        items, parts, diskon, total, status, ket: str(input.ket, 1000),
+        pembayaran, dibayar, bayar, jatuhTempo,
         invoice, createdAt: old?.createdAt || Date.now(), updatedAt: Date.now(),
         paidAt: bayar === 'Lunas' ? old?.paidAt || todayWIB() : null,
       };
@@ -177,7 +218,7 @@ export async function deleteOrder(id: string): Promise<Result> {
     await db.runTransaction(async tx => {
       const s = await tx.get(ref);
       if (!s.exists) return;
-      const old = { id: s.id, ...s.data() } as Order;
+      const old = normOrder({ id: s.id, ...s.data() });
       const stokSnaps = await readStok(tx, (old.parts || []).map(p => p.itemId));
       tx.delete(ref);
       applyStock(tx, stokSnaps, old, null);
@@ -193,7 +234,7 @@ export async function setOrderStatus(id: string, status: Order['status']): Promi
     await db.runTransaction(async tx => {
       const s = await tx.get(ref);
       if (!s.exists) throw new UserError('Order tidak ditemukan.');
-      const old = { id: s.id, ...s.data() } as Order;
+      const old = normOrder({ id: s.id, ...s.data() });
       const stokSnaps = await readStok(tx, (old.parts || []).map(p => p.itemId));
       tx.update(ref, { status, updatedAt: Date.now() });
       applyStock(tx, stokSnaps, old, { ...old, status });
@@ -201,10 +242,64 @@ export async function setOrderStatus(id: string, status: Order['status']): Promi
   });
 }
 
-export async function setPaid(id: string, lunas: boolean): Promise<Result> {
-  return run('admin', async () => {
-    await adminDb().doc('orders/' + str(id, 64)).update(lunas ? { bayar: 'Lunas', paidAt: todayWIB() } : { bayar: 'Belum lunas', paidAt: null });
+/* ---------------- pembayaran (bisa berkali-kali: DP, cicil, pelunasan) ---------------- */
+async function ubahPembayaran(id: string, fn: (p: Pembayaran[], o: Order) => Pembayaran[]) {
+  const db = adminDb();
+  const ref = db.doc('orders/' + str(id, 64));
+  await db.runTransaction(async tx => {
+    const s = await tx.get(ref);
+    if (!s.exists) throw new UserError('Order tidak ditemukan.');
+    const o = normOrder({ id: s.id, ...s.data() });
+    const pembayaran = fn([...o.pembayaran], o);
+    const dibayar = jumlahBayar(pembayaran), bayar = statusBayar(o.total, dibayar);
+    const lunasTgl = bayar === 'Lunas' ? (pembayaran.map(p => p.tanggal).sort().pop() || todayWIB()) : null;
+    tx.update(ref, { pembayaran, dibayar, bayar, paidAt: lunasTgl, updatedAt: Date.now() });
   });
+}
+
+export async function tambahPembayaran(id: string, v: { tanggal: string; jumlah: number; metode: Metode; ket: string }): Promise<Result> {
+  return run('admin', async me => {
+    const tanggal = str(v.tanggal, 10), jumlah = Math.round(num(v.jumlah));
+    if (!isDate(tanggal) || tanggal > todayWIB()) throw new UserError('Tanggal bayar tidak valid.');
+    if (jumlah <= 0) throw new UserError('Jumlah bayar harus lebih dari 0.');
+    if (!METODE.includes(v.metode)) throw new UserError('Pilih metode bayar.');
+    await ubahPembayaran(id, (p, o) => {
+      if (jumlah > Math.max(0, o.total - o.dibayar)) throw new UserError(`Jumlah melebihi sisa tagihan (${Math.max(0, o.total - o.dibayar).toLocaleString('id-ID')}).`);
+      return [...p, { id: 'p' + Date.now().toString(36), tanggal, jumlah, metode: v.metode, ket: str(v.ket, 200), oleh: me.nama, at: Date.now() }];
+    });
+  });
+}
+
+/* hapus catatan pembayaran (salah input) — khusus pemilik */
+export async function hapusPembayaran(id: string, pid: string): Promise<Result> {
+  return run('owner', async () => { await ubahPembayaran(id, p => p.filter(x => x.id !== pid)); });
+}
+
+/* ---------------- pelanggan ---------------- */
+type PelangganInput = Omit<Pelanggan, 'id' | 'createdAt'>;
+export async function savePelanggan(id: string | null, v: PelangganInput): Promise<ResultOf<{ id: string }>> {
+  return guarded('admin', async () => {
+    const nama = str(v.nama, 120);
+    if (!nama) throw new UserError('Nama pelanggan wajib diisi.');
+    const hp = str(v.hp, 30);
+    const doc = {
+      nama, hp, hpNorm: normalHp(hp) || '', alamat: str(v.alamat, 300), maps: str(v.maps, 500),
+      jenis: JENIS_PELANGGAN.includes(v.jenis) ? v.jenis : 'Perorangan',
+      tempoHari: Math.min(365, Math.max(0, Math.round(num(v.tempoHari)))),
+      intervalBulan: Math.min(24, Math.max(1, Math.round(num(v.intervalBulan)) || 3)),
+      units: (v.units || []).slice(0, 60).map(u => ({ id: str(u.id, 20) || Math.random().toString(36).slice(2, 10), label: str(u.label, 120) })).filter(u => u.label),
+      catatan: str(v.catatan, 1000),
+    };
+    const db = adminDb();
+    if (id) { await db.doc('pelanggan/' + str(id, 64)).update(doc); return { id }; }
+    const ref = await db.collection('pelanggan').add({ ...doc, createdAt: Date.now() });
+    return { id: ref.id };
+  });
+}
+
+/* hapus data pelanggan — khusus pemilik; order lama tetap ada (nama tersimpan di order) */
+export async function hapusPelanggan(id: string): Promise<Result> {
+  return run('owner', async () => { await adminDb().doc('pelanggan/' + str(id, 64)).delete(); });
 }
 
 /* ---------------- stok (harga beli hanya bisa diubah pemilik) ---------------- */

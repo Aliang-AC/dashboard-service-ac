@@ -2,10 +2,12 @@
 import { createContext, useContext } from 'react';
 import type { AllData, Result } from '@/lib/types';
 
-export type Tab = 'ringkasan' | 'order' | 'stok' | 'absensi' | 'invoice' | 'catatan' | 'pengaturan';
+export type Tab = 'ringkasan' | 'order' | 'pelanggan' | 'stok' | 'absensi' | 'invoice' | 'catatan' | 'pengaturan';
 
 export type Modal =
-  | { kind: 'order'; id?: string }
+  | { kind: 'order'; id?: string; pelangganId?: string }
+  | { kind: 'pelanggan'; id?: string }
+  | { kind: 'bayar'; id: string }
   | { kind: 'stok'; id?: string }
   | { kind: 'stok-in'; id: string; adj: boolean }
   | { kind: 'kar'; id?: string }
