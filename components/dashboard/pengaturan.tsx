@@ -1,10 +1,12 @@
 'use client';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { addPengguna, backupNow, removePengguna, saveSettings } from '@/app/actions';
+import { backupNow, saveLokasi, saveSettings } from '@/app/actions';
 import { layanan } from '@/lib/derive';
 import { formObj, useDash } from './ctx';
 
+/* Tab ini hanya tampil untuk pemilik. */
 export function Pengaturan() {
   const { d, run } = useDash();
   const st = d.settings, lay = layanan(d);
@@ -42,13 +44,49 @@ export function Pengaturan() {
         <div><Button type="submit" disabled={busy}>{busy ? 'Menyimpan…' : 'Simpan pengaturan'}</Button></div>
       </form>
 
-      {d.me.owner && <Akses />}
-      {d.me.owner && <Backup />}
+      <LokasiBengkel />
+      <Backup />
     </>
   );
 }
 
-/* Hanya pemilik: salinan semua data ke Google Sheet, otomatis tiap tengah malam WIB. */
+/* Titik bengkel & radius untuk absen QR. */
+function LokasiBengkel() {
+  const { d, run } = useDash();
+  const [lat, setLat] = useState(String(d.lokasi?.lat ?? ''));
+  const [lng, setLng] = useState(String(d.lokasi?.lng ?? ''));
+  const [radius, setRadius] = useState(String(d.lokasi?.radius ?? 100));
+  const [busy, setBusy] = useState(false);
+  const pakaiLokasiSaya = () => {
+    if (!('geolocation' in navigator)) return toast.error('Browser ini tidak mendukung GPS.');
+    toast.info('Membaca lokasi HP…');
+    navigator.geolocation.getCurrentPosition(
+      p => { setLat(p.coords.latitude.toFixed(7)); setLng(p.coords.longitude.toFixed(7)); toast.success(`Lokasi terbaca (akurasi ±${Math.round(p.coords.accuracy)} m). Klik Simpan lokasi.`); },
+      () => toast.error('Lokasi tidak terbaca. Izinkan akses lokasi lalu coba lagi.'),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+  };
+  return (
+    <form className="panel" style={{ maxWidth: 720, marginTop: 16 }}
+      onSubmit={async e => { e.preventDefault(); setBusy(true); await run(saveLokasi({ lat: +lat, lng: +lng, radius: +radius }), 'Lokasi bengkel tersimpan'); setBusy(false); }}>
+      <h3>Lokasi bengkel untuk absen</h3>
+      <p className="hint" style={{ marginBottom: 10 }}>Absen lewat QR hanya diterima kalau HP karyawan berada dalam radius ini dari titik bengkel.</p>
+      <div className="grid2">
+        <label className="lbl">Latitude<input className="field mono" value={lat} onChange={e => setLat(e.target.value)} required /></label>
+        <label className="lbl">Longitude<input className="field mono" value={lng} onChange={e => setLng(e.target.value)} required /></label>
+        <label className="lbl">Radius (meter)<input className="field" type="number" min={20} max={1000} value={radius} onChange={e => setRadius(e.target.value)} required /></label>
+      </div>
+      <div className="actions" style={{ marginTop: 12 }}>
+        <Button type="submit" disabled={busy}>{busy ? 'Menyimpan…' : 'Simpan lokasi'}</Button>
+        <Button type="button" variant="outline" onClick={pakaiLokasiSaya}>Pakai lokasi saya sekarang</Button>
+        {lat && lng && <Button variant="outline" nativeButton={false} render={<a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noopener noreferrer" />}>Lihat di Google Maps</Button>}
+      </div>
+      <p className="hint" style={{ marginTop: 8 }}>Tip: kalau pin Google Maps meleset, berdiri di tengah bengkel lalu klik “Pakai lokasi saya sekarang” → Simpan lokasi.</p>
+    </form>
+  );
+}
+
+/* Salinan semua data ke Google Sheet, otomatis tiap tengah malam WIB. */
 function Backup() {
   const { d, run } = useDash();
   const [busy, setBusy] = useState(false);
@@ -59,58 +97,17 @@ function Backup() {
     <div className="panel" style={{ maxWidth: 720, marginTop: 16 }}>
       <h3>Backup ke Google Sheets</h3>
       <p className="hint" style={{ marginBottom: 10 }}>
-        Semua data (order, stok, mutasi stok, karyawan, absensi, catatan) disalin otomatis ke Google Sheet setiap tengah malam WIB.
-        Isi sheet ditimpa setiap backup, jadi jangan diedit langsung di sana.
+        Setiap tengah malam WIB: karyawan yang tidak absen ditandai Alpa, absensi kemarin ditambahkan ke arsip “Absensi Karyawan”,
+        lalu semua data disalin ke sheet backup (isi sheet backup ditimpa, jangan diedit langsung).
       </p>
       <p style={{ margin: '0 0 12px' }}>Backup terakhir: <b className="num">{last}</b></p>
       <div className="actions">
         <Button disabled={busy} onClick={async () => { setBusy(true); await run(backupNow(), 'Backup selesai'); setBusy(false); }}>
           {busy ? 'Membackup…' : 'Backup sekarang'}
         </Button>
-        {d.backupUrl && (
-          <Button variant="outline" nativeButton={false} render={<a href={d.backupUrl} target="_blank" rel="noopener noreferrer" />}>Buka Google Sheet</Button>
-        )}
+        {d.backupUrl && <Button variant="outline" nativeButton={false} render={<a href={d.backupUrl} target="_blank" rel="noopener noreferrer" />}>Buka sheet backup</Button>}
+        {d.arsipUrl && <Button variant="outline" nativeButton={false} render={<a href={d.arsipUrl} target="_blank" rel="noopener noreferrer" />}>Buka arsip absensi</Button>}
       </div>
-    </div>
-  );
-}
-
-/* Hanya pemilik: daftar email yang boleh masuk ke dashboard. */
-function Akses() {
-  const { d, run } = useDash();
-  const [armed, setArmed] = useState<string | null>(null);
-  return (
-    <div className="panel" style={{ maxWidth: 720, marginTop: 16 }}>
-      <h3>Akses karyawan</h3>
-      <p className="hint" style={{ marginBottom: 10 }}>
-        Tambahkan email karyawan di sini. Setelah itu, karyawan membuka alamat dashboard ini, klik <b>Daftar</b> memakai email yang sama, lalu bisa ikut mengisi data.
-        Kamu (<span className="mono">{d.me.email}</span>) masuk sebagai pemilik.
-      </p>
-      <form className="toolbar" onSubmit={async e => {
-        e.preventDefault();
-        const form = e.currentTarget, f = formObj(form);
-        if (await run(addPengguna(f.email, f.nama), 'Akses ditambahkan')) form.reset();
-      }}>
-        <input className="field" style={{ flex: 2, minWidth: 200 }} type="email" name="email" required placeholder="email karyawan" />
-        <input className="field" style={{ flex: 1, minWidth: 140 }} name="nama" placeholder="nama (opsional)" />
-        <Button type="submit">+ Beri akses</Button>
-      </form>
-      {d.pengguna.length ? (
-        <ul className="list">
-          {d.pengguna.slice().sort((a, b) => a.email.localeCompare(b.email)).map(p => (
-            <li key={p.email}>
-              <div className="main"><b>{p.nama || p.email}</b><div className="meta mono">{p.email}</div></div>
-              <Button size="sm" variant="destructive" onClick={async () => {
-                if (armed !== p.email) return setArmed(p.email);
-                await run(removePengguna(p.email), 'Akses dicabut');
-                setArmed(null);
-              }}>{armed === p.email ? 'Klik lagi untuk cabut' : 'Cabut akses'}</Button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="empty">Belum ada karyawan yang diberi akses.</div>
-      )}
     </div>
   );
 }

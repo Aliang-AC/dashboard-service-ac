@@ -11,6 +11,7 @@ import { FormDialog } from './form-dialog';
 export function CatatanView() {
   const { d, open, run } = useDash();
   const [showDone, setShowDone] = useState(false);
+  const staff = d.me.peran !== 'karyawan';
   const t = d.today;
   const all = d.catatan.slice().sort((a, b) => (a.tanggal || '9999').localeCompare(b.tanggal || '9999'));
   const openN = all.filter(n => !n.selesai);
@@ -38,7 +39,7 @@ export function CatatanView() {
             {n.selesai
               ? <Button size="sm" variant="outline" onClick={() => run(setCatatanDone(n.id, false), 'Catatan dibuka lagi')}>Buka lagi</Button>
               : <Button size="sm" variant="secondary" onClick={() => run(setCatatanDone(n.id, true), 'Ditandai selesai')}>Selesai</Button>}
-            <Button size="sm" variant="outline" onClick={() => open({ kind: 'note', id: n.id })}>Ubah</Button>
+            {staff && <Button size="sm" variant="outline" onClick={() => open({ kind: 'note', id: n.id })}>Ubah</Button>}
           </span>
         </div>
       </div>
@@ -49,7 +50,7 @@ export function CatatanView() {
     <>
       <div className="section-head">
         <div><h2>Catatan &amp; pengingat</h2><p>Untuk kerjaan yang belum selesai, pelanggan yang minta dijadwal ulang, atau hal yang tidak boleh lupa.</p></div>
-        <div className="actions"><Button onClick={() => open({ kind: 'note' })}>+ Catatan baru</Button></div>
+        {staff && <div className="actions"><Button onClick={() => open({ kind: 'note' })}>+ Catatan baru</Button></div>}
       </div>
       {openN.length ? (
         groups.filter(g => g[1].length).map(([l, arr]) => (

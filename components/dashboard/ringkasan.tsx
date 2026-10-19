@@ -16,6 +16,7 @@ function Kpi({ lab, val, note, alert }: { lab: string; val: React.ReactNode; not
 export function Ringkasan() {
   const { d, go, open } = useDash();
   const t = d.today, m = t.slice(0, 7);
+  const owner = d.me.peran === 'owner'; // omzet hanya untuk pemilik
   const om = omzetOrders(d);
   const omToday = om.filter(o => o.tanggal === t);
   const omMonth = om.filter(o => monthKey(o.tanggal) === m);
@@ -40,15 +41,15 @@ export function Ringkasan() {
   return (
     <>
       <div className="section-head">
-        <div><h2>Ringkasan hari ini</h2><p>Omzet dihitung dari order berstatus Selesai.</p></div>
+        <div><h2>Ringkasan hari ini</h2>{owner && <p>Omzet dihitung dari order berstatus Selesai.</p>}</div>
         <div className="actions">
           <Button onClick={() => open({ kind: 'order' })}>+ Order baru</Button>
           <Button variant="outline" onClick={() => open({ kind: 'note' })}>+ Catatan</Button>
         </div>
       </div>
       <div className="kpis">
-        <Kpi lab="Omzet hari ini" val={rp(sum(omToday))} note={`${omToday.length} order selesai`} />
-        <Kpi lab="Omzet bulan ini" val={rp(sum(omMonth))} note={`${omMonth.length} order selesai`} />
+        {owner && <Kpi lab="Omzet hari ini" val={rp(sum(omToday))} note={`${omToday.length} order selesai`} />}
+        {owner && <Kpi lab="Omzet bulan ini" val={rp(sum(omMonth))} note={`${omMonth.length} order selesai`} />}
         <Kpi lab="Jadwal hari ini" val={jobsToday.length} note={`${jobsToday.filter(o => o.status === 'Selesai').length} sudah selesai`} />
         <Kpi lab="Belum dibayar" val={rp(sum(up))} note={`${up.length} invoice`} alert={up.length > 0} />
         <Kpi lab="Stok menipis" val={low.length} note={low.length ? 'perlu belanja' : 'stok aman'} alert={low.length > 0} />
@@ -75,7 +76,7 @@ export function Ringkasan() {
               <div className="empty"><b>Belum ada jadwal hari ini</b>Tambahkan order baru dari tombol di atas.</div>
             )}
           </div>
-          <div className="panel chart"><h3>Omzet 14 hari terakhir</h3><Chart14 d={d} /></div>
+          {owner && <div className="panel chart"><h3>Omzet 14 hari terakhir</h3><Chart14 d={d} /></div>}
         </div>
         <div className="stack">
           <div className="panel">

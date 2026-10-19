@@ -1,6 +1,6 @@
 import 'server-only';
-import { JWT } from 'google-auth-library';
 import { adminDb } from './firebase-admin';
+import { a1, isDefaultTab, sheetsApi } from './sheets';
 import type { Absensi, Catatan, Karyawan, Mutasi, Order, Stok } from './types';
 
 /* Backup semua data dashboard ke satu Google Sheet (BACKUP_SHEET_ID).
@@ -38,21 +38,27 @@ async function collect() {
       ['Barang', 'Kategori', 'Satuan', 'Sisa', 'Minimum', 'Harga beli', 'Harga jual', 'Nilai stok (modal)'],
       ...stok
         .sort((a, b) => (a.kategori || '').localeCompare(b.kategori || '') || a.nama.localeCompare(b.nama))
-        .map(s => [s.nama, s.kategori, s.satuan, +s.qty || 0, +s.min || 0, +s.hargaBeli || 0, +s.hargaJual || 0, (+s.qty || 0) * (+s.hargaBeli || 0)]),
+        .map(s => [s.nama, s.kategori, s.satuan, +s.qty || 0, +s.min || 0, +(s.hargaBeli || 0), +s.hargaJual || 0, (+s.qty || 0) * +(s.hargaBeli || 0)]),
     ],
     'Mutasi stok': [
       ['Tanggal', 'Barang', 'Jenis', 'Qty', 'Keterangan'],
       ...mutasi.sort((a, b) => a.createdAt - b.createdAt).map(m => [m.tanggal, m.nama, m.jenis, m.qty, m.ket]),
     ],
     Karyawan: [
-      ['Nama', 'Peran', 'HP', 'Status'],
-      ...karyawan.sort((a, b) => a.nama.localeCompare(b.nama)).map(k => [k.nama, k.peran, k.hp, k.nonaktif ? 'Nonaktif' : 'Aktif']),
+      ['Nama', 'Peran', 'HP', 'Akun login', 'Libur rutin', 'Status'],
+      ...karyawan.sort((a, b) => a.nama.localeCompare(b.nama)).map(k => [
+        k.nama, k.peran, k.hp, k.akun ? `${k.akun.username} (${k.akun.peran})` : '',
+        (k.liburMingguan || []).map(h => ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][h]).join(', '),
+        k.nonaktif ? 'Nonaktif' : 'Aktif',
+      ]),
     ],
     Absensi: [
-      ['Tanggal', 'Nama', 'Status', 'Masuk', 'Pulang', 'Keterangan'],
+      ['Tanggal', 'Nama', 'Status', 'Masuk', 'Pulang', 'Jarak masuk (m)', 'Cara', 'Dicatat oleh', 'Keterangan'],
       ...absensi
         .sort((a, b) => a.id.localeCompare(b.id))
-        .flatMap(d => Object.entries(d.records || {}).map(([kid, r]) => [d.id, nama(kid), r.status || '', r.masuk || '', r.pulang || '', r.ket || ''])),
+        .flatMap(d => Object.entries(d.records || {}).map(([kid, r]) => [
+          d.id, nama(kid), r.status || '', r.masuk || '', r.pulang || '', r.masukLoc?.jarak ?? '', r.via || '', r.oleh || '', r.ket || '',
+        ])),
     ],
     Catatan: [
       ['Jenis', 'Judul', 'Detail', 'Tanggal', 'Jam', 'Pelanggan', 'Untuk', 'Selesai'],
@@ -73,34 +79,17 @@ export async function runBackup(): Promise<{ rows: number; at: number }> {
   const sheetId = process.env.BACKUP_SHEET_ID;
   if (!sheetId) throw new Error('BACKUP_SHEET_ID belum diisi.');
   const { tabs, rows } = await collect();
-
-  const jwt = new JWT({
-    email: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-    key: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  const { token } = await jwt.getAccessToken();
-  const api = async (path: string, body?: unknown) => {
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}${path}`, {
-      method: body ? 'POST' : 'GET',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) throw new Error(`Sheets API ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    return res.json();
-  };
+  const api = await sheetsApi(sheetId);
 
   /* Pastikan semua tab ada; hapus tab bawaan kosong "Sheet1". */
-  const meta = await api('?fields=sheets.properties(sheetId,title)');
-  const existing: { sheetId: number; title: string }[] = meta.sheets.map((s: { properties: { sheetId: number; title: string } }) => s.properties);
+  const existing = await api.tabs();
   const titles = Object.keys(tabs);
   const requests: object[] = titles.filter(t => !existing.some(e => e.title === t)).map(title => ({ addSheet: { properties: { title } } }));
-  existing.filter(e => /^(Sheet|Lembar)\s?1$/.test(e.title)).forEach(e => requests.push({ deleteSheet: { sheetId: e.sheetId } }));
-  if (requests.length) await api(':batchUpdate', { requests });
+  existing.filter(e => isDefaultTab(e.title)).forEach(e => requests.push({ deleteSheet: { sheetId: e.sheetId } }));
+  if (requests.length) await api.call(':batchUpdate', { requests });
 
-  const range = (t: string) => `'${t.replace(/'/g, "''")}'`;
-  await api('/values:batchClear', { ranges: titles.map(range) });
-  await api('/values:batchUpdate', { valueInputOption: 'RAW', data: titles.map(t => ({ range: `${range(t)}!A1`, values: tabs[t] })) });
+  await api.call('/values:batchClear', { ranges: titles.map(a1) });
+  await api.call('/values:batchUpdate', { valueInputOption: 'RAW', data: titles.map(t => ({ range: `${a1(t)}!A1`, values: tabs[t] })) });
 
   const at = Date.now();
   await adminDb().doc('settings/backup').set({ at, rows });

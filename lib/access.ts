@@ -1,31 +1,38 @@
 import 'server-only';
 import { currentUser } from '@clerk/nextjs/server';
 import { adminDb, firebaseReady } from './firebase-admin';
-import type { Me } from './types';
+import type { Me, Peran } from './types';
 
-/* Pemilik ditentukan lewat env OWNER_EMAILS (pisah koma).
-   Karyawan boleh masuk kalau emailnya terdaftar di koleksi `pengguna` (diatur pemilik di Pengaturan). */
+/* Peran:
+   - owner   : email ada di env OWNER_EMAILS (login Google/email).
+   - admin / karyawan : akun nomor HP yang dibuat pemilik/admin; datanya di koleksi `akun/{clerkUserId}`
+     { peran, karyawanId, nama, username }. */
 const owners = () =>
   (process.env.OWNER_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 export type AccessState =
   | { kind: 'signed-out' }
   | { kind: 'no-db' }
-  | { kind: 'denied'; email: string }
+  | { kind: 'denied'; login: string }
   | { kind: 'ok'; me: Me };
 
 export async function getAccess(): Promise<AccessState> {
   const user = await currentUser();
   if (!user) return { kind: 'signed-out' };
   const email = (user.primaryEmailAddress?.emailAddress || '').toLowerCase();
-  const nama = [user.firstName, user.lastName].filter(Boolean).join(' ') || email;
+  const login = user.username || email || user.id;
+  const nama = [user.firstName, user.lastName].filter(Boolean).join(' ') || login;
   if (!firebaseReady) return { kind: 'no-db' };
-  if (owners().includes(email)) return { kind: 'ok', me: { email, nama, owner: true } };
-  if (email) {
-    const snap = await adminDb().doc('pengguna/' + email).get();
-    if (snap.exists) return { kind: 'ok', me: { email, nama, owner: false } };
+  if (email && owners().includes(email)) {
+    /* pemilik juga boleh terhubung ke data karyawan (opsional) lewat akun/{uid} */
+    const a = await adminDb().doc('akun/' + user.id).get();
+    return { kind: 'ok', me: { uid: user.id, nama, login, peran: 'owner', karyawanId: a.get('karyawanId') || null } };
   }
-  return { kind: 'denied', email };
+  const snap = await adminDb().doc('akun/' + user.id).get();
+  if (snap.exists && (snap.get('peran') === 'admin' || snap.get('peran') === 'karyawan')) {
+    return { kind: 'ok', me: { uid: user.id, nama: snap.get('nama') || nama, login, peran: snap.get('peran'), karyawanId: snap.get('karyawanId') || null } };
+  }
+  return { kind: 'denied', login };
 }
 
 export async function requireMe(): Promise<Me> {
@@ -33,3 +40,6 @@ export async function requireMe(): Promise<Me> {
   if (a.kind !== 'ok') throw new Error(a.kind === 'no-db' ? 'Database belum tersambung.' : 'Akun ini belum punya akses.');
   return a.me;
 }
+
+/* urutan hak: owner > admin > karyawan */
+export const atLeast = (p: Peran, min: Peran) => ({ owner: 3, admin: 2, karyawan: 1 })[p] >= ({ owner: 3, admin: 2, karyawan: 1 })[min];

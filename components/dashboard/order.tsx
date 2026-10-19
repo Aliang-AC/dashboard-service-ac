@@ -10,7 +10,39 @@ import { FormDialog } from './form-dialog';
 
 type Period = 'hari' | 'minggu' | 'bulan' | 'semua';
 
+/* karyawan: hanya jadwal miliknya, tanpa angka uang (sudah disaring di server) */
+function JadwalSaya() {
+  const { d } = useDash();
+  const list = d.orders.filter(o => o.status !== 'Batal' && o.tanggal >= addDays(d.today, -7))
+    .sort((a, b) => (a.tanggal + (a.jam || '99')).localeCompare(b.tanggal + (b.jam || '99')));
+  return (
+    <>
+      <div className="section-head"><div><h2>Jadwal saya</h2><p>Order yang ditugaskan ke Anda (7 hari terakhir dan yang akan datang).</p></div></div>
+      {list.length ? (
+        <ul className="list panel">
+          {list.map(o => (
+            <li key={o.id} style={o.tanggal === d.today ? { background: 'var(--copper-soft)' } : undefined}>
+              <span className="time">{fmtD(o.tanggal)}<br />{o.jam || ''}</span>
+              <div className="main">
+                <b>{o.pelanggan}</b> · {o.layanan}{o.qtyUnit > 1 ? ` (${o.qtyUnit} unit)` : ''}
+                <div className="meta">{o.alamat}{o.hp ? ' · ' + o.hp : ''}{o.unit ? ' · ' + o.unit : ''}</div>
+                {o.ket && <div className="meta">{o.ket}</div>}
+              </div>
+              <span className={`pill ${STATUS_CLS[o.status] || ''}`}>{o.status}</span>
+            </li>
+          ))}
+        </ul>
+      ) : <div className="panel empty"><b>Belum ada jadwal</b>Order yang ditugaskan ke Anda akan muncul di sini.</div>}
+    </>
+  );
+}
+
 export function OrderView() {
+  const { d } = useDash();
+  return d.me.peran === 'karyawan' ? <JadwalSaya /> : <OrderTable />;
+}
+
+function OrderTable() {
   const { d, open, run, go } = useDash();
   const [period, setPeriod] = useState<Period>('bulan');
   const [status, setStatus] = useState<'Semua' | Status>('Semua');
@@ -44,7 +76,7 @@ export function OrderView() {
         </select>
         <input type="search" className="field" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari nama, alamat, no. HP, invoice…" />
       </div>
-      <p className="muted" style={{ margin: '0 0 10px' }}>{list.length} order · omzet selesai <b className="num">{rp(sum)}</b></p>
+      <p className="muted" style={{ margin: '0 0 10px' }}>{list.length} order{d.me.peran === 'owner' && <> · omzet selesai <b className="num">{rp(sum)}</b></>}</p>
       {list.length ? (
         <div className="tablebox">
           <table>
@@ -116,7 +148,7 @@ export function OrderDialog({ id, onClose }: { id?: string; onClose: () => void 
           status: f.status as Status, bayar: f.bayar as Order['bayar'], metode: f.metode, ket: f.ket,
         }), o ? 'Order diperbarui' : 'Order tersimpan');
       }}
-      onDelete={o ? () => run(deleteOrder(o.id), 'Order dihapus') : undefined}
+      onDelete={o && d.me.peran === 'owner' ? () => run(deleteOrder(o.id), 'Order dihapus') : undefined}
     >
       <div className="grid2">
         <label className="lbl">Tanggal kunjungan<input className="field" type="date" name="tanggal" required defaultValue={o?.tanggal || d.today} /></label>

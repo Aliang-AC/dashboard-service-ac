@@ -36,8 +36,8 @@ async function Gate() {
         <div className="panel max-w-md text-center">
           <h3 className="justify-center">Akun ini belum punya akses</h3>
           <p className="muted">
-            Kamu masuk sebagai <b className="mono">{a.email}</b>. Minta pemilik usaha menambahkan email ini di menu
-            <b> Pengaturan → Akses karyawan</b>, lalu muat ulang halaman.
+            Kamu masuk sebagai <b className="mono">{a.login}</b>. Karyawan login memakai <b>nomor HP + password</b> yang
+            dibuatkan admin di menu <b>Absensi → Data karyawan</b>.
           </p>
           <SignOutButton>
             <Button variant="outline" className="mt-3">Keluar & ganti akun</Button>

@@ -13,16 +13,22 @@ import { DashCtx, type Ctx, type Modal, type Tab } from './ctx';
 import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
 import { StokView, StokDialog, StokInDialog } from './stok';
-import { AbsensiView, AbsDialog, KarDialog } from './absensi';
+import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog } from './absensi';
 import { InvoiceView } from './invoice';
 import { CatatanView, NoteDialog } from './catatan';
 import { Pengaturan } from './pengaturan';
 import { FormDialog } from './form-dialog';
+import type { Peran } from '@/lib/types';
 
-const TABS: [Tab, string][] = [
+const ALL_TABS: [Tab, string][] = [
   ['ringkasan', 'Ringkasan'], ['order', 'Order & Penjualan'], ['stok', 'Stok'], ['absensi', 'Absensi'],
   ['invoice', 'Invoice'], ['catatan', 'Catatan'], ['pengaturan', 'Pengaturan'],
 ];
+/* tab yang tampil per peran */
+const tabsFor = (p: Peran): [Tab, string][] =>
+  p === 'owner' ? ALL_TABS
+    : p === 'admin' ? ALL_TABS.filter(([k]) => k !== 'pengaturan')
+      : [['absensi', 'Absensi saya'], ['order', 'Jadwal saya'], ['catatan', 'Catatan']];
 
 async function fetchAll() {
   const r = await loadAll();
@@ -36,10 +42,13 @@ export function Dashboard() {
   const { data: d, error, mutate, isValidating } = useSWR('all', fetchAll, {
     refreshInterval: 15000, revalidateOnFocus: true, keepPreviousData: true, onSuccess: () => setUpdatedAt(new Date()),
   });
-  const [tab, setTab] = useState<Tab>(() => {
-    try { const t = localStorage.getItem('sac-tab') as Tab | null; if (t && TABS.some(x => x[0] === t)) return t; } catch {}
+  const [rawTab, setTab] = useState<Tab>(() => {
+    try { const t = localStorage.getItem('sac-tab') as Tab | null; if (t && ALL_TABS.some(x => x[0] === t)) return t; } catch {}
     return 'ringkasan';
   });
+  const TABS = d ? tabsFor(d.me.peran) : [];
+  /* tab tersimpan bisa tidak berlaku untuk peran ini → pakai tab pertama */
+  const tab: Tab = TABS.some(x => x[0] === rawTab) ? rawTab : TABS[0]?.[0] || 'ringkasan';
   const [modal, setModal] = useState<Modal | null>(null);
   const [invSel, setInvSel] = useState<string | null>(null);
 
@@ -61,7 +70,7 @@ export function Dashboard() {
 
   const ctx = useMemo<Ctx | null>(() => (d ? { d, run, go, open: setModal, invSel, setInvSel } : null), [d, run, go, invSel]);
 
-  const badges: Partial<Record<Tab, number>> = d ? { stok: d.stok.filter(isLow).length, invoice: unpaid(d).length, catatan: dueNotes(d).length } : {};
+  const badges: Partial<Record<Tab, number>> = d && d.me.peran !== 'karyawan' ? { stok: d.stok.filter(isLow).length, invoice: unpaid(d).length, catatan: dueNotes(d).length } : {};
   const close = () => setModal(null);
 
   return (
@@ -116,7 +125,9 @@ export function Dashboard() {
             {modal?.kind === 'stok' && <StokDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok-in' && <StokInDialog id={modal.id} adj={modal.adj} onClose={close} />}
             {modal?.kind === 'kar' && <KarDialog id={modal.id} onClose={close} />}
-            {modal?.kind === 'abs' && <AbsDialog id={modal.id} onClose={close} />}
+            {modal?.kind === 'abs' && <AbsDialog id={modal.id} tanggal={modal.tanggal} onClose={close} />}
+            {modal?.kind === 'akun' && <AkunDialog id={modal.id} onClose={close} />}
+            {modal?.kind === 'libur' && <LiburDialog onClose={close} />}
             {modal?.kind === 'note' && <NoteDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'text' && (
               <FormDialog title={modal.title} onClose={close} wide={false}>

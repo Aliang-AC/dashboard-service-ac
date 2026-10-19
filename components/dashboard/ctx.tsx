@@ -9,7 +9,9 @@ export type Modal =
   | { kind: 'stok'; id?: string }
   | { kind: 'stok-in'; id: string; adj: boolean }
   | { kind: 'kar'; id?: string }
-  | { kind: 'abs'; id: string }
+  | { kind: 'akun'; id: string }
+  | { kind: 'abs'; id: string; tanggal: string }
+  | { kind: 'libur' }
   | { kind: 'note'; id?: string }
   | { kind: 'text'; title: string; text: string };
 

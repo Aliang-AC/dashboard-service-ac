@@ -14,8 +14,9 @@ export function StokView() {
   const list = d.stok
     .filter(s => !qq || [s.nama, s.kategori].join(' ').toLowerCase().includes(qq))
     .sort((a, b) => +isLow(b) - +isLow(a) || (a.kategori || '').localeCompare(b.kategori || '') || a.nama.localeCompare(b.nama));
-  const nilai = d.stok.reduce((a, s) => a + (+s.qty || 0) * (+s.hargaBeli || 0), 0);
+  const nilai = d.stok.reduce((a, s) => a + (+s.qty || 0) * (+(s.hargaBeli || 0)), 0);
   const lowN = d.stok.filter(isLow).length;
+  const owner = d.me.peran === 'owner'; // harga modal hanya untuk pemilik
 
   return (
     <>
@@ -26,13 +27,13 @@ export function StokView() {
       <div className="kpis">
         <div className="kpi"><span className="lab">Jenis barang</span><span className="val">{d.stok.length}</span><span className="note">terdaftar</span></div>
         <div className={`kpi${lowN ? ' alert' : ''}`}><span className="lab">Menipis / habis</span><span className="val">{lowN}</span><span className="note">di bawah batas minimum</span></div>
-        <div className="kpi"><span className="lab">Nilai stok (modal)</span><span className="val">{rp(nilai)}</span><span className="note">qty × harga beli</span></div>
+        {owner && <div className="kpi"><span className="lab">Nilai stok (modal)</span><span className="val">{rp(nilai)}</span><span className="note">qty × harga beli</span></div>}
       </div>
       <div className="toolbar"><input type="search" className="field" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari barang…" /></div>
       {list.length ? (
         <div className="tablebox">
           <table>
-            <thead><tr><th>Barang</th><th>Kategori</th><th className="r">Sisa</th><th className="r">Min.</th><th className="r">Harga beli</th><th className="r">Harga jual</th><th></th></tr></thead>
+            <thead><tr><th>Barang</th><th>Kategori</th><th className="r">Sisa</th><th className="r">Min.</th>{owner && <th className="r">Harga beli</th>}<th className="r">Harga jual</th><th></th></tr></thead>
             <tbody>
               {list.map(s => {
                 const out = (+s.qty || 0) <= 0, low = isLow(s);
@@ -42,7 +43,7 @@ export function StokView() {
                     <td>{s.kategori}</td>
                     <td className="r num">{+s.qty || 0} <span className="sm">{s.satuan}</span></td>
                     <td className="r num">{+s.min || 0}</td>
-                    <td className="r num">{rp(s.hargaBeli)}</td>
+                    {owner && <td className="r num">{rp(s.hargaBeli)}</td>}
                     <td className="r num">{rp(s.hargaJual)}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <Button size="sm" variant="secondary" onClick={() => open({ kind: 'stok-in', id: s.id, adj: false })}>+ Masuk</Button>{' '}
@@ -86,6 +87,7 @@ export function StokView() {
 export function StokDialog({ id, onClose }: { id?: string; onClose: () => void }) {
   const { d, run } = useDash();
   const s = id ? d.stok.find(x => x.id === id) : undefined;
+  const owner = d.me.peran === 'owner';
   return (
     <FormDialog
       title={s ? 'Ubah barang' : 'Barang baru'}
@@ -95,7 +97,7 @@ export function StokDialog({ id, onClose }: { id?: string; onClose: () => void }
         const v = { nama: f.nama, kategori: f.kategori, satuan: f.satuan, min: +f.min || 0, hargaBeli: +f.hargaBeli || 0, hargaJual: +f.hargaJual || 0, qty: +f.qty || 0 };
         return run(saveStok(s?.id || null, v), s ? 'Barang diperbarui' : 'Barang ditambahkan');
       }}
-      onDelete={s ? () => run(deleteStok(s.id), 'Barang dihapus') : undefined}
+      onDelete={s && owner ? () => run(deleteStok(s.id), 'Barang dihapus') : undefined}
     >
       <div className="grid2">
         <label className="lbl span2">Nama barang<input className="field" name="nama" required defaultValue={s?.nama || ''} placeholder="mis. Freon R32" autoFocus /></label>
@@ -103,7 +105,7 @@ export function StokDialog({ id, onClose }: { id?: string; onClose: () => void }
         <label className="lbl">Satuan<select className="field" name="satuan" defaultValue={s?.satuan || SATUAN[0]}>{SATUAN.map(k => <option key={k}>{k}</option>)}</select></label>
         {!s && <label className="lbl">Stok awal<input className="field" type="number" name="qty" min={0} step="any" defaultValue={0} /></label>}
         <label className="lbl">Batas minimum<input className="field" type="number" name="min" min={0} step="any" defaultValue={s?.min ?? 1} /></label>
-        <label className="lbl">Harga beli (Rp)<input className="field" type="number" name="hargaBeli" min={0} step={500} defaultValue={s?.hargaBeli ?? ''} /></label>
+        {owner && <label className="lbl">Harga beli (Rp)<input className="field" type="number" name="hargaBeli" min={0} step={500} defaultValue={s?.hargaBeli ?? ''} /></label>}
         <label className="lbl">Harga jual (Rp)<input className="field" type="number" name="hargaJual" min={0} step={500} defaultValue={s?.hargaJual ?? ''} /></label>
       </div>
     </FormDialog>
@@ -137,7 +139,7 @@ export function StokInDialog({ id, adj, onClose }: { id: string; adj: boolean; o
       ) : (
         <div className="grid2">
           <label className="lbl">Jumlah masuk ({s.satuan})<input className="field" type="number" name="qty" step="any" min={0} required autoFocus /></label>
-          <label className="lbl">Harga beli satuan (Rp)<input className="field" type="number" name="harga" min={0} step={500} defaultValue={+s.hargaBeli || ''} /></label>
+          {d.me.peran === 'owner' && <label className="lbl">Harga beli satuan (Rp)<input className="field" type="number" name="harga" min={0} step={500} defaultValue={+(s.hargaBeli || 0) || ''} /></label>}
           <label className="lbl span2">Supplier / keterangan<input className="field" name="ket" placeholder="mis. Toko Sinar Teknik" /></label>
         </div>
       )}
