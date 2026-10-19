@@ -1,15 +1,10 @@
 import { Suspense } from 'react';
+import Image from 'next/image';
 import { APP_NAME } from '@/lib/brand';
 
-export function Logo() {
-  return (
-    <div className="logo" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--surface)" strokeWidth="2" strokeLinecap="round">
-        <path d="M12 2v20M4.9 6l14.2 12M19.1 6 4.9 18" />
-        <path d="m9 3.5 3 2.5 3-2.5M9 20.5l3-2.5 3 2.5" />
-      </svg>
-    </div>
-  );
+/* Logo CV Glory Teknik (public/logo.png, 142×169) */
+export function Logo({ size = 38 }: { size?: number }) {
+  return <Image src="/logo.png" alt="" aria-hidden width={Math.round((size * 142) / 169)} height={size} priority style={{ flex: 'none' }} />;
 }
 
 /* Bingkai halaman masuk/daftar & halaman pemberitahuan (belum ada akses, dsb). */
