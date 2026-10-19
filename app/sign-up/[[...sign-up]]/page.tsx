@@ -1,10 +1,6 @@
-import { SignUp } from '@clerk/nextjs';
-import { AuthShell } from '@/components/auth-shell';
+import { redirect } from 'next/navigation';
 
+/* Pendaftaran mandiri ditutup: akun karyawan dibuat oleh admin/pemilik (tab Absensi → Buat akun). */
 export default function Page() {
-  return (
-    <AuthShell>
-      <SignUp />
-    </AuthShell>
-  );
+  redirect('/sign-in');
 }

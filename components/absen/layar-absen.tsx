@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import useSWR from 'swr';
 import { loadAll, qrToken } from '@/app/actions';
 import { Logo } from '@/components/auth-shell';
+import { APP_NAME } from '@/lib/brand';
 
 /* QR berisi link /absen?k=<token>; token berganti tiap 30 detik (dibuat di server). */
 export function LayarAbsen() {
@@ -49,7 +50,7 @@ export function LayarAbsen() {
 
   return (
     <main className="wrap flex min-h-dvh flex-col items-center gap-5 py-6 text-center">
-      <div className="flex items-center gap-3"><Logo /><h1 className="text-2xl leading-none">{data?.settings.nama || 'Layar Absen'}</h1></div>
+      <div className="flex items-center gap-3"><Logo /><h1 className="text-2xl leading-none">{APP_NAME}</h1></div>
       <div>
         <div className="muted">Scan pakai kamera HP untuk absen masuk / pulang</div>
         <div className="num text-3xl font-semibold">{new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })} WIB</div>

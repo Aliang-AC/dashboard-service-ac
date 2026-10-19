@@ -19,11 +19,15 @@ export type AccessState =
 export async function getAccess(): Promise<AccessState> {
   const user = await currentUser();
   if (!user) return { kind: 'signed-out' };
-  const email = (user.primaryEmailAddress?.emailAddress || '').toLowerCase();
+  /* semua email akun ini, termasuk dari login Google (atribut email di Clerk boleh dimatikan) */
+  const emails = [
+    user.primaryEmailAddress?.emailAddress, ...user.emailAddresses.map(e => e.emailAddress), ...user.externalAccounts.map(a => a.emailAddress),
+  ].filter(Boolean).map(e => e!.toLowerCase());
+  const email = emails[0] || '';
   const login = user.username || email || user.id;
   const nama = [user.firstName, user.lastName].filter(Boolean).join(' ') || login;
   if (!firebaseReady) return { kind: 'no-db' };
-  if (email && owners().includes(email)) {
+  if (emails.some(e => owners().includes(e))) {
     /* pemilik juga boleh terhubung ke data karyawan (opsional) lewat akun/{uid} */
     const a = await adminDb().doc('akun/' + user.id).get();
     return { kind: 'ok', me: { uid: user.id, nama, login, peran: 'owner', karyawanId: a.get('karyawanId') || null } };

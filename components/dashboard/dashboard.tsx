@@ -19,6 +19,7 @@ import { CatatanView, NoteDialog } from './catatan';
 import { Pengaturan } from './pengaturan';
 import { FormDialog } from './form-dialog';
 import type { Peran } from '@/lib/types';
+import { APP_NAME } from '@/lib/brand';
 
 const ALL_TABS: [Tab, string][] = [
   ['ringkasan', 'Ringkasan'], ['order', 'Order & Penjualan'], ['stok', 'Stok'], ['absensi', 'Absensi'],
@@ -80,7 +81,7 @@ export function Dashboard() {
           <div className="flex flex-wrap items-center gap-3 pt-3 pb-1.5">
             <Logo />
             <div className="min-w-0 flex-1">
-              <h1 className="text-[1.45rem] leading-tight">{d?.settings.nama || 'Dashboard Service AC'}</h1>
+              <h1 className="text-[1.45rem] leading-tight">{APP_NAME}</h1>
               <div className="muted text-[.85rem]">
                 {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' })}
               </div>

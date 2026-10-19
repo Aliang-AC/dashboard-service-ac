@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { APP_NAME } from '@/lib/brand';
 
 export function Logo() {
   return (
@@ -18,7 +19,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       <div className="flex items-center gap-3">
         <Logo />
         <div>
-          <h1 className="text-2xl leading-none">Dashboard Service AC</h1>
+          <h1 className="text-2xl leading-none">{APP_NAME}</h1>
           <div className="muted text-sm">Order · Stok · Absensi · Invoice · Catatan</div>
         </div>
       </div>
