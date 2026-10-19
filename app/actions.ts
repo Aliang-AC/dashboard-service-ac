@@ -8,7 +8,7 @@ import { adminDb } from '@/lib/firebase-admin';
 import { atLeast, requireMe } from '@/lib/access';
 import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
-import { buangFoto, cekDrive, fotoAktif, uploadFoto } from '@/lib/drive';
+import { buangFoto, fotoAktif, sambungSkrip, uploadFoto } from '@/lib/drive';
 import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
 import { hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
@@ -364,7 +364,7 @@ export async function kirimFoto(id: string, jenis: Foto['jenis'], base64: string
     } catch (e) {
       console.error(e);
       const m = e instanceof Error ? e.message : '';
-      throw new UserError(m === 'FOTO_BELUM_AKTIF' ? 'Penyimpanan foto belum disambungkan pemilik (Pengaturan → Foto).' : /403|404/.test(m) ? 'Google Drive menolak akses. Pastikan Drive API aktif & akun robot jadi anggota Shared Drive.' : 'Upload foto gagal. Coba lagi.');
+      throw new UserError(m === 'FOTO_BELUM_AKTIF' ? 'Penyimpanan foto belum disambungkan pemilik (Pengaturan → Foto).' : 'Upload foto gagal. Coba lagi.');
     }
     const foto: Foto = { id: fileId, jenis, oleh: me.nama, olehUid: me.uid, at: Date.now() };
     await ref.update({ foto: FieldValue.arrayUnion(foto), fotoIds: FieldValue.arrayUnion(fileId), updatedAt: Date.now() });
@@ -388,18 +388,19 @@ export async function hapusFoto(id: string, fotoId: string): Promise<Result> {
   });
 }
 
-/* pemilik menyambungkan Shared Drive (tempel link folder/drive) */
+/* pemilik menyambungkan skrip foto (URL web app Google Apps Script yang berakhiran /exec) */
 export async function setDriveFoto(link: string): Promise<ResultOf<{ nama: string }>> {
   return guarded('owner', async () => {
-    const m = String(link || '').match(/(?:folders\/|drives\/|^)([A-Za-z0-9_-]{10,})/);
-    if (!m) throw new UserError('Link Shared Drive tidak dikenali.');
+    const url = String(link || '').trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url))
+      throw new UserError('Tempel URL Web app dari Apps Script (diawali https://script.google.com/macros/s/ dan berakhiran /exec).');
     try {
-      const d = await cekDrive(m[1]);
-      await adminDb().doc('settings/foto').set({ driveId: d.id, nama: d.name, folders: {} });
-      return { nama: d.name };
+      const folder = await sambungSkrip(url);
+      return { nama: folder ? 'folder Foto di Drive Anda' : 'Drive Anda' };
     } catch (e) {
       console.error(e);
-      throw new UserError('Shared Drive tidak bisa dibuka akun robot. Pastikan Drive API aktif dan akun robot sudah jadi Content manager di Shared Drive itu.');
+      const m = e instanceof Error ? e.message : '';
+      throw new UserError(/unauthorized/.test(m) ? 'Kata sandi di skrip tidak cocok. Salin ulang kode skrip dari panduan.' : 'Skrip tidak bisa dipanggil. Pastikan sudah Deploy sebagai Web app dengan "Execute as: Me" dan "Who has access: Anyone".');
     }
   });
 }

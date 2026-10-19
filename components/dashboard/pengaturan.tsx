@@ -87,7 +87,7 @@ function LokasiBengkel() {
   );
 }
 
-/* Sambungkan Shared Drive tempat foto bukti kerja disimpan. */
+/* Sambungkan skrip Apps Script tempat foto bukti kerja disimpan. */
 function FotoDrive() {
   const { d, run } = useDash();
   const [busy, setBusy] = useState(false);
@@ -98,17 +98,16 @@ function FotoDrive() {
         const f = formObj(e.currentTarget);
         setBusy(true);
         const r = await setDriveFoto(f.link);
-        await run(Promise.resolve(r.ok ? { ok: true as const } : r), r.ok ? `Tersambung ke Shared Drive “${r.data.nama}”` : undefined);
+        await run(Promise.resolve(r.ok ? { ok: true as const } : r), r.ok ? `Tersambung — foto disimpan ke ${r.data.nama}` : undefined);
         setBusy(false);
       }}>
       <h3>Foto bukti kerja {d.fotoAktif ? <span className="pill good">Aktif</span> : <span className="pill warn">Belum disambungkan</span>}</h3>
       <p className="hint" style={{ marginBottom: 10 }}>
-        Foto sebelum-sesudah dari teknisi disimpan di Shared Drive Google (dikelompokkan per bulan). Akun robot
-        <span className="mono"> firebase-adminsdk-fbsvc@my-dashboard-service-ac.iam.gserviceaccount.com</span> harus jadi <b>Content manager</b> di Shared Drive itu,
-        dan Google Drive API harus aktif.
+        Foto sebelum-sesudah dari teknisi disimpan di Google Drive Anda (Karyawan AI → Dashboard Bisnis → Foto, per bulan)
+        lewat skrip Google Apps Script yang berjalan atas nama akun Drive Anda. Tempel URL Web app skrip di bawah.
       </p>
       <div className="toolbar">
-        <input className="field" name="link" required placeholder="Tempel link Shared Drive, mis. https://drive.google.com/drive/folders/0A…" style={{ flex: 1, minWidth: 240 }} />
+        <input className="field" name="link" required placeholder="https://script.google.com/macros/s/…/exec" style={{ flex: 1, minWidth: 240 }} />
         <Button type="submit" disabled={busy}>{busy ? 'Mengecek…' : d.fotoAktif ? 'Ganti' : 'Sambungkan'}</Button>
       </div>
     </form>
