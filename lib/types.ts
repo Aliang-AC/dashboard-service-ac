@@ -63,8 +63,13 @@ export type Pelanggan = {
 };
 
 /* hargaBeli disembunyikan (null) untuk selain pemilik */
-export type Stok = { id: string; nama: string; kategori: string; satuan: string; qty: number; min: number; hargaBeli: number | null; hargaJual: number };
-export type Mutasi = { id: string; createdAt: number; tanggal: string; itemId: string; nama: string; jenis: 'Masuk' | 'Keluar' | 'Kembali' | 'Koreksi'; qty: number | string; ket: string };
+/* Barang roll (roll=true): rolls = panjang tiap roll utuh (boleh beda-beda), qty = sisa eceran; panjangRoll = panjang bawaan roll baru.
+   Barang biasa: qty = jumlah stok. Harga beli/jual per satuan (mis. per meter). */
+export type Stok = {
+  id: string; nama: string; kategori: string; satuan: string; qty: number; min: number; hargaBeli: number | null; hargaJual: number;
+  roll?: boolean; panjangRoll?: number; rolls?: number[];
+};
+export type Mutasi = { id: string; createdAt: number; tanggal: string; itemId: string; nama: string; jenis: 'Masuk' | 'Keluar' | 'Kembali' | 'Koreksi' | 'Buka roll'; qty: number | string; ket: string };
 
 export type Peran = 'owner' | 'admin' | 'karyawan';
 /* liburMingguan: hari libur rutin, 0 = Minggu … 6 = Sabtu.
@@ -89,7 +94,7 @@ export type Catatan = {
 };
 export type Layanan = { nama: string; harga: number };
 /* jamMasuk = Senin–Sabtu; jamMasukMinggu = khusus hari Minggu (kosong = sama dengan jamMasuk) */
-export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string };
+export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string; templateAjakForm?: string };
 
 /* jam masuk yang berlaku untuk tanggal tertentu (YYYY-MM-DD) */
 export function jamMasukTgl(st: Pick<Settings, 'jamMasuk' | 'jamMasukMinggu'>, tanggal: string) {

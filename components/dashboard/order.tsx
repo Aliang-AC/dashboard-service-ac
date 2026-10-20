@@ -1,4 +1,5 @@
 'use client';
+import { totalStok } from '@/lib/stok';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { deleteOrder, saveOrder, setOrderStatus } from '@/app/actions';
@@ -276,7 +277,7 @@ export function OrderDialog({ id, onClose, pelangganId }: { id?: string; onClose
             <select className="field" aria-label="Barang" value={p.itemId}
               onChange={e => { const s = d.stok.find(x => x.id === e.target.value); setPart(p.key, { itemId: e.target.value, harga: p.harga || String(s?.hargaJual || '') }); }}>
               <option value="">Pilih barang…</option>
-              {stok.map(s => <option key={s.id} value={s.id}>{s.nama} (sisa {+s.qty || 0} {s.satuan})</option>)}
+              {stok.map(s => <option key={s.id} value={s.id}>{s.nama} (sisa {totalStok(s)} {s.satuan})</option>)}
             </select>
             <input className="field" type="number" min={0} step="any" value={p.qty} onChange={e => setPart(p.key, { qty: e.target.value })} aria-label="Jumlah" />
             <input className="field" type="number" min={0} step={500} value={p.harga} onChange={e => setPart(p.key, { harga: e.target.value })} placeholder="Harga" aria-label="Harga satuan" />

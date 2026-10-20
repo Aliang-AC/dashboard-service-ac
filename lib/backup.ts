@@ -1,4 +1,5 @@
 import 'server-only';
+import { ringkasRoll, totalStok } from './stok';
 import { adminDb } from './firebase-admin';
 import { a1, isDefaultTab, sheetsApi } from './sheets';
 import { normOrder, sisa, subtotalItems, subtotalParts } from './order';
@@ -53,10 +54,10 @@ async function collect() {
       ]),
     ],
     Stok: [
-      ['Barang', 'Kategori', 'Satuan', 'Sisa', 'Minimum', 'Harga beli', 'Harga jual', 'Nilai stok (modal)'],
+      ['Barang', 'Kategori', 'Satuan', 'Sisa', 'Minimum', 'Harga beli', 'Harga jual', 'Nilai stok (modal)', 'Rincian roll'],
       ...stok
         .sort((a, b) => (a.kategori || '').localeCompare(b.kategori || '') || a.nama.localeCompare(b.nama))
-        .map(s => [s.nama, s.kategori, s.satuan, +s.qty || 0, +s.min || 0, +(s.hargaBeli || 0), +s.hargaJual || 0, (+s.qty || 0) * +(s.hargaBeli || 0)]),
+        .map(s => [s.nama, s.kategori, s.satuan, totalStok(s), +s.min || 0, +(s.hargaBeli || 0), +s.hargaJual || 0, totalStok(s) * +(s.hargaBeli || 0), s.roll ? ringkasRoll(s) : '']),
     ],
     'Mutasi stok': [
       ['Tanggal', 'Barang', 'Jenis', 'Qty', 'Keterangan'],

@@ -12,6 +12,7 @@ import { buangFoto, fotoAktif, sambungSkrip, uploadFoto } from '@/lib/drive';
 import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
 import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { labelUnit, tambahBulan } from '@/lib/servis';
+import { pakaiRoll } from '@/lib/stok';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
   STATUS, ABS_ST, METODE, JENIS_PELANGGAN, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
@@ -119,10 +120,19 @@ function applyStock(tx: Transaction, stokSnaps: Map<string, DocumentSnapshot>, o
     const d = r3(raw);
     const snap = stokSnaps.get(id);
     if (!d || !snap?.exists) continue;
-    tx.update(snap.ref, { qty: FieldValue.increment(-d) });
+    const ket = `${ref.invoice || ''} · ${ref.pelanggan || ''}`;
+    if (snap.get('roll')) {
+      /* barang roll: pakai eceran dulu, kalau kurang roll utuh dibuka otomatis; yang kembali masuk ke eceran */
+      const qty = +snap.get('qty') || 0, rolls: number[] = snap.get('rolls') || [];
+      const hasil = d > 0 ? pakaiRoll(qty, rolls, d) : { qty: r3(qty - d), rolls, dibuka: [] as number[] };
+      tx.update(snap.ref, { qty: hasil.qty, rolls: hasil.rolls });
+      hasil.dibuka.forEach(p => tx.create(db.collection('mutasi').doc(), {
+        createdAt: Date.now(), tanggal: todayWIB(), itemId: id, nama: snap.get('nama') || '', jenis: 'Buka roll', qty: p, ket: 'Otomatis · ' + ket,
+      }));
+    } else tx.update(snap.ref, { qty: FieldValue.increment(-d) });
     tx.create(db.collection('mutasi').doc(), {
       createdAt: Date.now(), tanggal: todayWIB(), itemId: id, nama: snap.get('nama') || '',
-      jenis: d > 0 ? 'Keluar' : 'Kembali', qty: Math.abs(d), ket: `${ref.invoice || ''} · ${ref.pelanggan || ''}`,
+      jenis: d > 0 ? 'Keluar' : 'Kembali', qty: Math.abs(d), ket,
     });
   }
 }
@@ -564,21 +574,49 @@ export async function hapusPelanggan(id: string): Promise<Result> {
 }
 
 /* ---------------- stok (harga beli hanya bisa diubah pemilik) ---------------- */
-type StokInput = { nama: string; kategori: string; satuan: string; min: number; hargaBeli: number | null; hargaJual: number; qty?: number };
+/* Barang roll (pipa AC, kabel, …): rolls = panjang tiap roll utuh, qty = sisa eceran. Barang biasa: qty = jumlah stok. */
+type StokInput = {
+  nama: string; kategori: string; satuan: string; min: number; hargaBeli: number | null; hargaJual: number; qty?: number;
+  roll?: boolean; panjangRoll?: number; rolls?: number[];
+};
+const cleanRolls = (rolls: unknown) => (Array.isArray(rolls) ? rolls : []).slice(0, 200).map(x => r3(num(x))).filter(x => x > 0);
+const fmtRoll = (rolls: number[]) => `${rolls.length} roll (${rolls.map(x => x.toLocaleString('id-ID')).join(' · ')})`;
+const sum = (xs: number[]) => r3(xs.reduce((a, x) => a + x, 0));
 
 export async function saveStok(id: string | null, v: StokInput): Promise<Result> {
   return run('admin', async me => {
     const nama = str(v.nama, 120);
     if (!nama) throw new UserError('Nama barang wajib diisi.');
-    const doc: Record<string, unknown> = { nama, kategori: str(v.kategori, 40), satuan: str(v.satuan, 20), min: Math.max(0, num(v.min)), hargaJual: Math.max(0, num(v.hargaJual)) };
+    const roll = !!v.roll;
+    const doc: Record<string, unknown> = {
+      nama, kategori: str(v.kategori, 40), satuan: str(v.satuan, 20), min: Math.max(0, num(v.min)), hargaJual: Math.max(0, num(v.hargaJual)),
+      roll, panjangRoll: roll ? Math.max(0, r3(num(v.panjangRoll))) || 30 : null,
+    };
     if (me.peran === 'owner') doc.hargaBeli = Math.max(0, num(v.hargaBeli));
     const db = adminDb();
-    if (id) { await db.doc('stok/' + str(id, 64)).update(doc); return; }
+    if (id) {
+      const ref = db.doc('stok/' + str(id, 64));
+      await db.runTransaction(async tx => {
+        const s = await tx.get(ref);
+        if (!s.exists) throw new UserError('Barang tidak ditemukan.');
+        const lama: number[] = s.get('rolls') || [];
+        if (roll && !s.get('roll')) doc.rolls = [];
+        /* mode roll dimatikan: roll utuh yang tersisa digabung ke jumlah stok biasa */
+        if (!roll && s.get('roll') && lama.length) { doc.qty = r3((+s.get('qty') || 0) + sum(lama)); doc.rolls = []; }
+        tx.update(ref, doc);
+      });
+      return;
+    }
     const qty = r3(Math.max(0, num(v.qty)));
+    const rolls = roll ? cleanRolls(v.rolls) : [];
     const batch = db.batch();
     const ref = db.collection('stok').doc();
-    batch.set(ref, { hargaBeli: 0, ...doc, qty });
-    if (qty) batch.set(db.collection('mutasi').doc(), { createdAt: Date.now(), tanggal: todayWIB(), itemId: ref.id, nama, jenis: 'Masuk', qty, ket: 'Stok awal' });
+    batch.set(ref, { hargaBeli: 0, ...doc, qty, rolls });
+    const total = r3(qty + sum(rolls));
+    if (total) batch.set(db.collection('mutasi').doc(), {
+      createdAt: Date.now(), tanggal: todayWIB(), itemId: ref.id, nama, jenis: 'Masuk', qty: total,
+      ket: 'Stok awal' + (rolls.length ? ` · ${fmtRoll(rolls)}${qty ? ` + ${qty.toLocaleString('id-ID')} eceran` : ''}` : ''),
+    });
     await batch.commit();
   });
 }
@@ -587,24 +625,50 @@ export async function deleteStok(id: string): Promise<Result> {
   return run('owner', async () => { await adminDb().doc('stok/' + str(id, 64)).delete(); });
 }
 
-export async function stokMasuk(id: string, qty: number, harga: number, ket: string): Promise<Result> {
+/* qty = tambahan eceran/jumlah biasa; rolls = roll utuh yang masuk (khusus barang roll). harga = harga beli per satuan */
+export async function stokMasuk(id: string, qty: number, harga: number, ket: string, rolls: number[] = []): Promise<Result> {
   return run('admin', async me => {
-    const q = r3(num(qty));
-    if (q <= 0) throw new UserError('Isi jumlah masuk lebih dari 0.');
+    const q = r3(Math.max(0, num(qty)));
     const db = adminDb();
     const ref = db.doc('stok/' + str(id, 64));
-    const s = await ref.get();
-    if (!s.exists) throw new UserError('Barang tidak ditemukan.');
-    const upd: Record<string, unknown> = { qty: FieldValue.increment(q) };
-    if (me.peran === 'owner' && num(harga) > 0) upd.hargaBeli = num(harga);
-    const batch = db.batch();
-    batch.update(ref, upd);
-    batch.set(db.collection('mutasi').doc(), { createdAt: Date.now(), tanggal: todayWIB(), itemId: s.id, nama: s.get('nama'), jenis: 'Masuk', qty: q, ket: str(ket, 200) });
-    await batch.commit();
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new UserError('Barang tidak ditemukan.');
+      const r = s.get('roll') ? cleanRolls(rolls) : [];
+      if (q <= 0 && !r.length) throw new UserError('Isi jumlah masuk lebih dari 0.');
+      const upd: Record<string, unknown> = { qty: r3((+s.get('qty') || 0) + q) };
+      if (r.length) upd.rolls = [...(s.get('rolls') || []), ...r];
+      if (me.peran === 'owner' && num(harga) > 0) upd.hargaBeli = num(harga);
+      tx.update(ref, upd);
+      const rinci = r.length ? fmtRoll(r) + (q ? ` + ${q.toLocaleString('id-ID')} eceran` : '') : '';
+      tx.create(db.collection('mutasi').doc(), {
+        createdAt: Date.now(), tanggal: todayWIB(), itemId: s.id, nama: s.get('nama'), jenis: 'Masuk', qty: r3(q + sum(r)),
+        ket: [rinci, str(ket, 200)].filter(Boolean).join(' · '),
+      });
+    });
   });
 }
 
-export async function stokKoreksi(id: string, qty: number, ket: string): Promise<Result> {
+/* buka satu roll utuh (urutan ke-idx) → panjangnya pindah ke eceran */
+export async function bukaRoll(id: string, idx: number): Promise<Result> {
+  return run('admin', async () => {
+    const db = adminDb();
+    const ref = db.doc('stok/' + str(id, 64));
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new UserError('Barang tidak ditemukan.');
+      const rolls: number[] = [...(s.get('rolls') || [])];
+      const i = Math.round(num(idx));
+      if (!s.get('roll') || i < 0 || i >= rolls.length) throw new UserError('Roll tidak ditemukan. Muat ulang halaman.');
+      const [p] = rolls.splice(i, 1);
+      tx.update(ref, { rolls, qty: r3((+s.get('qty') || 0) + p) });
+      tx.create(db.collection('mutasi').doc(), { createdAt: Date.now(), tanggal: todayWIB(), itemId: s.id, nama: s.get('nama'), jenis: 'Buka roll', qty: p, ket: 'Dibuka manual' });
+    });
+  });
+}
+
+/* hitung ulang: qty = jumlah/eceran hasil hitung fisik; rolls = daftar roll utuh hasil hitung (khusus barang roll) */
+export async function stokKoreksi(id: string, qty: number, ket: string, rolls?: number[]): Promise<Result> {
   return run('admin', async () => {
     const q = r3(Math.max(0, num(qty)));
     const db = adminDb();
@@ -612,9 +676,15 @@ export async function stokKoreksi(id: string, qty: number, ket: string): Promise
     await db.runTransaction(async tx => {
       const s = await tx.get(ref);
       if (!s.exists) throw new UserError('Barang tidak ditemukan.');
-      const diff = r3(q - (+s.get('qty') || 0));
-      tx.update(ref, { qty: q });
-      tx.create(db.collection('mutasi').doc(), { createdAt: Date.now(), tanggal: todayWIB(), itemId: s.id, nama: s.get('nama'), jenis: 'Koreksi', qty: (diff > 0 ? '+' : '') + diff, ket: str(ket, 200) || 'Hitung ulang' });
+      const isRoll = !!s.get('roll');
+      const baru = isRoll ? cleanRolls(rolls ?? s.get('rolls')) : [];
+      const diff = r3(q + sum(baru) - (+s.get('qty') || 0) - (isRoll ? sum(s.get('rolls') || []) : 0));
+      tx.update(ref, isRoll ? { qty: q, rolls: baru } : { qty: q });
+      const rinci = isRoll ? `Jadi ${fmtRoll(baru)} + ${q.toLocaleString('id-ID')} eceran` : '';
+      tx.create(db.collection('mutasi').doc(), {
+        createdAt: Date.now(), tanggal: todayWIB(), itemId: s.id, nama: s.get('nama'), jenis: 'Koreksi', qty: (diff > 0 ? '+' : '') + diff,
+        ket: [str(ket, 200) || 'Hitung ulang', rinci].filter(Boolean).join(' · '),
+      });
     });
   });
 }
@@ -870,7 +940,16 @@ export async function saveSettings(v: Settings): Promise<Result> {
       nama: str(v.nama, 120), alamat: str(v.alamat, 300), hp: str(v.hp, 30), jamMasuk, jamMasukMinggu, rekening: str(v.rekening, 1000),
       layanan: (v.layanan || []).slice(0, 100).map(l => ({ nama: str(l.nama, 120), harga: Math.max(0, num(l.harga)) })).filter(l => l.nama),
       templatePengingat: str(v.templatePengingat, 1000),
-    });
+    }, { merge: true }); // merge: kolom lain (mis. template ajakan form) tidak ikut terhapus
+  });
+}
+
+/* Pesan ajakan isi form daftar — boleh diubah admin & pemilik. {link} = link form, {usaha} = nama usaha. */
+export async function saveTemplateAjak(teks: string): Promise<Result> {
+  return run('admin', async () => {
+    const t = str(teks, 1500);
+    if (t && !t.includes('{link}')) throw new UserError('Pesan harus memuat {link} supaya link form ikut terkirim.');
+    await adminDb().doc('settings/usaha').set({ templateAjakForm: t }, { merge: true });
   });
 }
 

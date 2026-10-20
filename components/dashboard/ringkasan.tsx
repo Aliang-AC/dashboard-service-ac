@@ -1,5 +1,6 @@
 'use client';
 import { Button } from '@/components/ui/button';
+import { ringkasRoll, totalStok } from '@/lib/stok';
 import { absToday, activeKar, dueNotes, isLow, omzetOrders, STATUS_CLS, unpaid } from '@/lib/derive';
 import { addDays, fmtD, monthKey, rp, short } from '@/lib/format';
 import { ringkasItems, sisa } from '@/lib/order';
@@ -47,7 +48,7 @@ export function Ringkasan() {
     ...dueNotes(d).map(n => ({ k: n.tanggal < t ? 'bad' : 'warn', t: `${n.tanggal < t ? 'Terlambat' : 'Hari ini'}: ${n.judul}`, m: n.tipe, go: 'catatan' as Tab })),
     ...resched.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${ringkasItems(o.items)} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
     ...lewatTempo.map(o => ({ k: 'bad', t: `Lewat jatuh tempo: ${o.pelanggan}`, m: `${o.invoice} · sisa ${rp(sisa(o))} · tempo ${fmtD(o.jatuhTempo)}`, go: 'invoice' as Tab })),
-    ...low.map(s => ({ k: (+s.qty || 0) <= 0 ? 'bad' : 'warn', t: `Stok ${(+s.qty || 0) <= 0 ? 'habis' : 'menipis'}: ${s.nama}`, m: `Sisa ${+s.qty || 0} ${s.satuan || ''} · minimum ${+s.min || 0}`, go: 'stok' as Tab })),
+    ...low.map(s => ({ k: totalStok(s) <= 0 ? 'bad' : 'warn', t: `Stok ${totalStok(s) <= 0 ? 'habis' : 'menipis'}: ${s.nama}`, m: `Sisa ${s.roll ? ringkasRoll(s) : `${totalStok(s)} ${s.satuan || ''}`} · minimum ${+s.min || 0}`, go: 'stok' as Tab })),
   ];
 
   const svcCount: Record<string, number> = {};

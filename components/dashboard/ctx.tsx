@@ -14,6 +14,7 @@ export type Modal =
   | { kind: 'bayarRekap'; id: string }
   | { kind: 'stok'; id?: string }
   | { kind: 'stok-in'; id: string; adj: boolean }
+  | { kind: 'stok-buka'; id: string }
   | { kind: 'kar'; id?: string }
   | { kind: 'akun'; id: string }
   | { kind: 'abs'; id: string; tanggal: string }

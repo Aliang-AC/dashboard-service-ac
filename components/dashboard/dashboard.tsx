@@ -12,7 +12,7 @@ import type { Result } from '@/lib/types';
 import { DashCtx, type Ctx, type Modal, type Tab } from './ctx';
 import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
-import { StokView, StokDialog, StokInDialog } from './stok';
+import { BukaRollDialog, StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
 import { InvoiceView, BayarDialog } from './invoice';
 import { PelangganView, PelangganDialog } from './pelanggan';
@@ -136,6 +136,7 @@ export function Dashboard() {
             {modal?.kind === 'bayarRekap' && <BayarRekapDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok' && <StokDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok-in' && <StokInDialog id={modal.id} adj={modal.adj} onClose={close} />}
+            {modal?.kind === 'stok-buka' && <BukaRollDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'kar' && <KarDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'abs' && <AbsDialog id={modal.id} tanggal={modal.tanggal} onClose={close} />}
             {modal?.kind === 'akun' && <AkunDialog id={modal.id} onClose={close} />}

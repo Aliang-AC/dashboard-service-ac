@@ -1,4 +1,5 @@
 'use client';
+import { totalStok } from '@/lib/stok';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -159,7 +160,7 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
           <div key={p.key} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 70px 34px', gap: 6 }}>
             <select className="field" value={p.itemId} onChange={e => setParts(xs => xs.map(x => (x.key === p.key ? { ...x, itemId: e.target.value } : x)))}>
               <option value="">Pilih barang…</option>
-              {stok.map(s => <option key={s.id} value={s.id}>{s.nama} (sisa {+s.qty || 0} {s.satuan})</option>)}
+              {stok.map(s => <option key={s.id} value={s.id}>{s.nama} (sisa {totalStok(s)} {s.satuan})</option>)}
             </select>
             <input className="field" type="number" min={0} step="any" value={p.qty} onChange={e => setParts(xs => xs.map(x => (x.key === p.key ? { ...x, qty: e.target.value } : x)))} />
             <Button type="button" variant="outline" size="icon" aria-label="Hapus" onClick={() => setParts(xs => xs.filter(x => x.key !== p.key))}>×</Button>
