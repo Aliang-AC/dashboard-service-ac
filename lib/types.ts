@@ -88,7 +88,14 @@ export type Catatan = {
   pelanggan: string; untuk: string; selesai: boolean; doneAt?: number; createdAt: number;
 };
 export type Layanan = { nama: string; harga: number };
-export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string };
+/* jamMasuk = Senin–Sabtu; jamMasukMinggu = khusus hari Minggu (kosong = sama dengan jamMasuk) */
+export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string };
+
+/* jam masuk yang berlaku untuk tanggal tertentu (YYYY-MM-DD) */
+export function jamMasukTgl(st: Pick<Settings, 'jamMasuk' | 'jamMasukMinggu'>, tanggal: string) {
+  const minggu = new Date(tanggal + 'T00:00:00Z').getUTCDay() === 0;
+  return (minggu && st.jamMasukMinggu) || st.jamMasuk || '08:00';
+}
 export type Lokasi = { lat: number; lng: number; radius: number };
 
 export type Me = { uid: string; nama: string; login: string; peran: Peran; karyawanId: string | null };

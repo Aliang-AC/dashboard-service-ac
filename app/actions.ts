@@ -90,7 +90,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       c = c.filter(x => !x.untuk || x.untuk === kid);
       /* untuk laporan teknisi: nama layanan & barang stok saja, tanpa harga */
       s = s.map(x => ({ ...x, hargaBeli: null, hargaJual: 0 }));
-      st = { nama: st.nama, jamMasuk: st.jamMasuk, layanan: (st.layanan || []).map(l => ({ nama: l.nama, harga: 0 })) };
+      st = { nama: st.nama, jamMasuk: st.jamMasuk, jamMasukMinggu: st.jamMasukMinggu, layanan: (st.layanan || []).map(l => ({ nama: l.nama, harga: 0 })) };
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
@@ -864,10 +864,10 @@ export async function deleteCatatan(id: string): Promise<Result> {
 /* ---------------- pengaturan (pemilik) ---------------- */
 export async function saveSettings(v: Settings): Promise<Result> {
   return run('owner', async () => {
-    const jamMasuk = str(v.jamMasuk, 5) || '08:00';
-    if (!isTime(jamMasuk)) throw new UserError('Jam masuk tidak valid.');
+    const jamMasuk = str(v.jamMasuk, 5) || '08:00', jamMasukMinggu = str(v.jamMasukMinggu, 5);
+    if (!isTime(jamMasuk) || !isTime(jamMasukMinggu)) throw new UserError('Jam masuk tidak valid.');
     await adminDb().doc('settings/usaha').set({
-      nama: str(v.nama, 120), alamat: str(v.alamat, 300), hp: str(v.hp, 30), jamMasuk, rekening: str(v.rekening, 1000),
+      nama: str(v.nama, 120), alamat: str(v.alamat, 300), hp: str(v.hp, 30), jamMasuk, jamMasukMinggu, rekening: str(v.rekening, 1000),
       layanan: (v.layanan || []).slice(0, 100).map(l => ({ nama: str(l.nama, 120), harga: Math.max(0, num(l.harga)) })).filter(l => l.nama),
       templatePengingat: str(v.templatePengingat, 1000),
     });

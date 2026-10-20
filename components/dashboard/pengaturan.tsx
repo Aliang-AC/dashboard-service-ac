@@ -28,14 +28,15 @@ export function Pengaturan() {
             return i > 0 ? { nama: l.slice(0, i).trim(), harga: +l.slice(i + 1).replace(/[^\d]/g, '') || 0 } : { nama: l, harga: 0 };
           });
           setBusy(true);
-          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, rekening: f.rekening, layanan: lay, templatePengingat: f.templatePengingat }), 'Pengaturan tersimpan');
+          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, jamMasukMinggu: f.jamMasukMinggu, rekening: f.rekening, layanan: lay, templatePengingat: f.templatePengingat }), 'Pengaturan tersimpan');
           setBusy(false);
         }}>
         <div className="grid2">
           <label className="lbl span2">Nama usaha<input className="field" name="nama" defaultValue={st.nama || ''} placeholder="mis. Sejuk Jaya Service AC" /></label>
           <label className="lbl span2">Alamat<input className="field" name="alamat" defaultValue={st.alamat || ''} /></label>
           <label className="lbl">No. HP / WA usaha<input className="field" name="hp" defaultValue={st.hp || ''} /></label>
-          <label className="lbl">Jam masuk kerja<input className="field" type="time" name="jamMasuk" defaultValue={st.jamMasuk || '08:00'} /></label>
+          <label className="lbl">Jam masuk Senin–Sabtu<input className="field" type="time" name="jamMasuk" defaultValue={st.jamMasuk || '08:00'} /></label>
+          <label className="lbl">Jam masuk hari Minggu<input className="field" type="time" name="jamMasukMinggu" defaultValue={st.jamMasukMinggu || ''} /></label>
           <label className="lbl span2">Info pembayaran di invoice<textarea className="field" name="rekening" defaultValue={st.rekening || ''} placeholder="mis. Transfer BCA 123xxxx a.n. ..." /></label>
           <label className="lbl span2">Daftar layanan &amp; tarif per unit
             <textarea className="field mono" name="layanan" style={{ minHeight: 160 }} defaultValue={lay.map(l => `${l.nama} = ${+l.harga || 0}`).join('\n')} />

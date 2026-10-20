@@ -3,7 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { adminDb } from './firebase-admin';
 import { a1, isDefaultTab, sheetsApi } from './sheets';
 import { fmtMonth } from './format';
-import { HARI, type AbsRecord, type Absensi, type Karyawan, type Lokasi } from './types';
+import { HARI, jamMasukTgl, type AbsRecord, type Absensi, type Karyawan, type Lokasi } from './types';
 
 /* ---------- lokasi bengkel ---------- */
 /* Titik default: Cv. Glory Teknik service AC (Aliang AC), Jl. MT. Haryono Pal 5, Sintang (dari Google Maps). */
@@ -130,7 +130,7 @@ export async function arsipkan(tanggal: string) {
   if ((cfg.get('lastDate') || '') >= tanggal) return { skipped: 'sudah diarsipkan' };
 
   const [kar, absSnap, setSnap] = await Promise.all([db.collection('karyawan').get(), db.doc('absensi/' + tanggal).get(), db.doc('settings/usaha').get()]);
-  const jamMasuk = setSnap.get('jamMasuk') || '08:00';
+  const jamMasuk = jamMasukTgl(setSnap.data() || {}, tanggal);
   const records = ((absSnap.data() as Absensi | undefined)?.records || {}) as Record<string, AbsRecord>;
   const nama = (id: string) => kar.docs.find(d => d.id === id)?.get('nama') || '(dihapus)';
   const rows = Object.entries(records)
@@ -152,7 +152,7 @@ export async function arsipKoreksi(tanggal: string, nama: string, rec: AbsRecord
     const cfg = await db.doc('settings/arsip').get();
     const sheetId = cfg.get('absensiSheetId') as string | undefined;
     if (!sheetId || (cfg.get('lastDate') || '') < tanggal) return; // belum diarsipkan: nanti ikut proses malam
-    const jamMasuk = (await db.doc('settings/usaha').get()).get('jamMasuk') || '08:00';
+    const jamMasuk = jamMasukTgl((await db.doc('settings/usaha').get()).data() || {}, tanggal);
     const waktu = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'short', timeStyle: 'short' });
     const row = rec
       ? barisArsip(tanggal, nama, { ...rec, oleh }, jamMasuk, `KOREKSI ${waktu}`)

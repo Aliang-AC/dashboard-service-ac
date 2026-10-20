@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { absenManual, buatAkun, hapusAbsen, hapusAkun, liburSemua, resetPassword, saveKaryawan } from '@/app/actions';
 import { ABS_CLS, karName } from '@/lib/derive';
 import { addDays, fmtD, fmtLong, fmtMonth, monthKey } from '@/lib/format';
-import { ABS_ST, HARI, type AbsRecord, type AbsStatus, type AllData, type Karyawan } from '@/lib/types';
+import { ABS_ST, HARI, jamMasukTgl, type AbsRecord, type AbsStatus, type AllData, type Karyawan } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 
@@ -37,7 +37,7 @@ export function AbsensiView() {
 /* ================= pemilik & admin ================= */
 function AbsensiStaff() {
   const { d, open } = useDash();
-  const jm = d.settings.jamMasuk || '08:00';
+  const jm = (tgl: string) => jamMasukTgl(d.settings, tgl);
   const [tgl, setTgl] = useState(d.today);
   const [month, setMonth] = useState(d.today.slice(0, 7));
   const lewat = tgl < d.today;
@@ -52,7 +52,7 @@ function AbsensiStaff() {
       const r = day.records?.[k.id];
       if (!r?.status) return;
       c[r.status]++;
-      const t = telatMenit(r, jm);
+      const t = telatMenit(r, jm(day.id));
       if (t) { c.telat++; c.menit += t; }
       if (r.status === 'Hadir' && r.masuk && !r.pulang && day.id < d.today) c.tanpaPulang++;
     });
@@ -64,7 +64,7 @@ function AbsensiStaff() {
   return (
     <>
       <div className="section-head">
-        <div><h2>Absensi karyawan</h2><p>Absen masuk & pulang lewat scan QR di bengkel (radius {d.lokasi?.radius ?? 100} m). Jam masuk {jm}; lewat semenit pun ditandai telat.</p></div>
+        <div><h2>Absensi karyawan</h2><p>Absen masuk & pulang lewat scan QR di bengkel (radius {d.lokasi?.radius ?? 100} m). Jam masuk Senin–Sabtu {d.settings.jamMasuk || '08:00'}{d.settings.jamMasukMinggu ? `, Minggu ${d.settings.jamMasukMinggu}` : ''}; lewat semenit pun ditandai telat.</p></div>
         <div className="actions">
           <Button nativeButton={false} render={<a href="/layar-absen" target="_blank" rel="noopener" />}>Buka Layar Absen</Button>
           <Button variant="outline" onClick={() => open({ kind: 'libur' })}>Tandai libur</Button>
@@ -88,7 +88,7 @@ function AbsensiStaff() {
               <tbody>
                 {aktif.map(k => {
                   const r = recOf(d, tgl, k.id);
-                  const merah = isMerah(r, jm, lewat);
+                  const merah = isMerah(r, jm(tgl), lewat);
                   const bisaEdit = d.me.peran === 'owner' || k.id !== d.me.karyawanId;
                   return (
                     <tr key={k.id} className={merah ? 'out' : ''} style={merah ? { background: 'var(--bad-soft)' } : undefined}>
@@ -99,8 +99,8 @@ function AbsensiStaff() {
                           {bisaEdit && <Button size="xs" variant="outline" onClick={() => open({ kind: 'abs', id: k.id, tanggal: tgl })}>Koreksi</Button>}
                         </div>
                       </td>
-                      <td><StatusPill r={r} k={k} tgl={tgl} jamMasuk={jm} /></td>
-                      <td className="num" style={telatMenit(r, jm) ? red : undefined}>{r?.masuk || '—'}</td>
+                      <td><StatusPill r={r} k={k} tgl={tgl} jamMasuk={jm(tgl)} /></td>
+                      <td className="num" style={telatMenit(r, jm(tgl)) ? red : undefined}>{r?.masuk || '—'}</td>
                       <td className="num" style={lewat && r?.status === 'Hadir' && r.masuk && !r.pulang ? red : undefined}>{r?.pulang || (lewat && r?.status === 'Hadir' ? 'tidak absen' : '—')}</td>
                       <td className="r num">{r?.masukLoc ? <a className="linkbtn" href={mapsLink(r.masukLoc)} target="_blank" rel="noopener noreferrer">{r.masukLoc.jarak} m</a> : '—'}</td>
                       <td className="sm">{r?.via ? `${r.via}${r.oleh ? ' · ' + r.oleh : ''}` : ''}</td>
@@ -183,17 +183,17 @@ function AbsensiSaya() {
   const { d } = useDash();
   const kid = d.me.karyawanId || '';
   const k = d.karyawan.find(x => x.id === kid);
-  const jm = d.settings.jamMasuk || '08:00';
+  const jm = (tgl: string) => jamMasukTgl(d.settings, tgl);
   const r = recOf(d, d.today, kid);
   const bulan = d.absensi.filter(a => monthKey(a.id) === d.today.slice(0, 7) && a.records?.[kid]).sort((a, b) => b.id.localeCompare(a.id));
-  const t = telatMenit(r, jm);
+  const t = telatMenit(r, jm(d.today));
 
   if (!k) return <div className="panel empty"><b>Akun belum terhubung</b>Hubungi admin untuk menghubungkan akun Anda ke data karyawan.</div>;
   return (
     <>
-      <div className="section-head"><div><h2>Absensi saya</h2><p>Halo, {k.nama}. Jam masuk {jm}.</p></div></div>
+      <div className="section-head"><div><h2>Absensi saya</h2><p>Halo, {k.nama}. Jam masuk hari ini {jm(d.today)}.</p></div></div>
       <div className="panel" style={t ? { borderColor: 'var(--bad)', background: 'var(--bad-soft)' } : undefined}>
-        <h3>Hari ini · {fmtLong(d.today)} <StatusPill r={r} k={k} tgl={d.today} jamMasuk={jm} /></h3>
+        <h3>Hari ini · {fmtLong(d.today)} <StatusPill r={r} k={k} tgl={d.today} jamMasuk={jm(d.today)} /></h3>
         <div className="att-card" style={{ border: 0, padding: 0, background: 'transparent' }}>
           <div className="times"><div><span>Masuk</span>{r?.masuk || '—'}</div><div><span>Pulang</span>{r?.pulang || '—'}</div></div>
         </div>
@@ -212,10 +212,10 @@ function AbsensiSaya() {
               <tbody>
                 {bulan.map(a => {
                   const x = a.records[kid];
-                  const merah = isMerah(x, jm, a.id < d.today);
+                  const merah = isMerah(x, jm(a.id), a.id < d.today);
                   return (
                     <tr key={a.id} style={merah ? { background: 'var(--bad-soft)' } : undefined}>
-                      <td className="num">{fmtD(a.id)}</td><td><StatusPill r={x} tgl={a.id} jamMasuk={jm} /></td>
+                      <td className="num">{fmtD(a.id)}</td><td><StatusPill r={x} tgl={a.id} jamMasuk={jm(a.id)} /></td>
                       <td className="num">{x.masuk || '—'}</td><td className="num">{x.pulang || '—'}</td><td className="sm">{x.ket}</td>
                     </tr>
                   );
@@ -233,7 +233,7 @@ function AbsensiSaya() {
 export function RiwayatDialog({ id, month, onClose }: { id: string; month: string; onClose: () => void }) {
   const { d, open } = useDash();
   const k = d.karyawan.find(x => x.id === id);
-  const jm = d.settings.jamMasuk || '08:00';
+  const jm = (tgl: string) => jamMasukTgl(d.settings, tgl);
   const rows = d.absensi.filter(a => monthKey(a.id) === month && a.records?.[id]).sort((a, b) => b.id.localeCompare(a.id));
   const bisaEdit = d.me.peran === 'owner' || id !== d.me.karyawanId;
   return (
@@ -246,8 +246,8 @@ export function RiwayatDialog({ id, month, onClose }: { id: string; month: strin
               {rows.map(a => {
                 const r = a.records[id];
                 return (
-                  <tr key={a.id} style={isMerah(r, jm, a.id < d.today) ? { background: 'var(--bad-soft)' } : undefined}>
-                    <td className="num">{fmtD(a.id)}</td><td><StatusPill r={r} tgl={a.id} jamMasuk={jm} /></td>
+                  <tr key={a.id} style={isMerah(r, jm(a.id), a.id < d.today) ? { background: 'var(--bad-soft)' } : undefined}>
+                    <td className="num">{fmtD(a.id)}</td><td><StatusPill r={r} tgl={a.id} jamMasuk={jm(a.id)} /></td>
                     <td className="num">{r.masuk || '—'}</td><td className="num">{r.pulang || '—'}</td><td className="sm">{r.ket}</td>
                     <td>{bisaEdit && <Button size="xs" variant="outline" onClick={() => open({ kind: 'abs', id, tanggal: a.id })}>Koreksi</Button>}</td>
                   </tr>
