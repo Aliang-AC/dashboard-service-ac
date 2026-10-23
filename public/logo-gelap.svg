@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="m" gradientUnits="userSpaceOnUse" x1="0" y1="13" x2="0" y2="187">
+      <stop offset="0" stop-color="#f7931e"/><stop offset=".5" stop-color="#e8382b"/><stop offset="1" stop-color="#f26522"/>
+    </linearGradient>
+    <linearGradient id="b" gradientUnits="userSpaceOnUse" x1="0" y1="30" x2="0" y2="170">
+      <stop offset="0" stop-color="#5fb0ff"/><stop offset="1" stop-color="#6f7dff"/>
+    </linearGradient>
+    <linearGradient id="h" gradientUnits="userSpaceOnUse" x1="0" y1="70" x2="0" y2="130">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dfe8ff"/>
+    </linearGradient>
+  </defs>
+  <path d="M84.7 13.3 A88 88 0 0 0 84.7 186.7 A96 96 0 0 1 84.7 13.3 Z" fill="url(#m)"/>
+  <g fill="none" stroke="url(#b)" stroke-width="7" stroke-linecap="round">
+    <path d="M70 34 A74 74 0 0 1 164 64"/>
+    <path d="M164 136 A74 74 0 0 1 70 166"/>
+  </g>
+  <g transform="translate(100 100) skewX(-14) translate(-100 -100)">
+    <path d="M104 78 H66 L51 93 V107 L66 122 H99 V99 H81" fill="none" stroke="url(#h)" stroke-width="15" stroke-linejoin="miter"/>
+    <path d="M107 70.5 H186 L176 85.5 H143 V129.5 H128 V85.5 H107 Z" fill="url(#h)"/>
+  </g>
+</svg>

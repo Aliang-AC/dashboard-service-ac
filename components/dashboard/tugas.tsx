@@ -10,9 +10,10 @@ import { JENIS_FOTO, type Foto, type Order, type Status } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { mapsUrl } from './order';
+import { lokasiUnit, specUnit } from '@/lib/unit';
 
 /* Kecilkan foto di HP sebelum dikirim: sisi terpanjang 1280 px, JPEG kualitas 0.75 (±200–400 KB). */
-async function kecilkan(file: File): Promise<string> {
+export async function kecilkan(file: File): Promise<string> {
   const bmp = await createImageBitmap(file);
   const k = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
@@ -88,8 +89,9 @@ let k = 0;
 
 /* Layar tugas teknisi untuk satu order */
 export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }) {
-  const { d, run } = useDash();
+  const { d, run, open } = useDash();
   const o = d.orders.find(x => x.id === id);
+  const p = d.pelanggan.find(x => x.id === o?.pelangganId);
   const [items, setItems] = useState<Baru[]>([]);
   const [parts, setParts] = useState<PartBaru[]>([]);
   const lay = d.settings.layanan || [];
@@ -133,6 +135,26 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
               onClick={() => run(teknisiStatus(o.id, s), 'Status: ' + s)}>{s === 'Dikerjakan' ? 'Mulai kerjakan' : s === 'Selesai' ? '✓ Tandai selesai' : 'Jadwal ulang'}</Button>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset className="box">
+        <legend>Unit AC & stiker · {(p?.units || []).filter(u => !u.nonaktif).length}</legend>
+        {p ? (
+          <>
+            {(p.units || []).filter(u => !u.nonaktif).length ? (
+              <ul className="list">
+                {(p.units || []).filter(u => !u.nonaktif).map(u => (
+                  <li key={u.id}>
+                    <div className="main">{lokasiUnit(u) || 'Tanpa nama ruangan'}
+                      <div className="meta">{specUnit(u) || 'data belum lengkap'} · {u.kode ? <span className="mono">{u.kode}</span> : <span style={{ color: 'var(--warn)' }}>belum ada stiker</span>}</div></div>
+                    <Button type="button" size="sm" variant={u.kode ? 'outline' : 'default'} disabled={o.status === 'Batal'} onClick={() => open({ kind: 'unit', orderId: o.id, unitId: u.id })}>{u.kode ? 'Ubah' : 'Pasang stiker'}</Button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="hint" style={{ margin: 0 }}>Belum ada unit AC tercatat untuk konsumen ini.</p>}
+            <div><Button type="button" size="sm" variant="secondary" disabled={o.status === 'Batal'} onClick={() => open({ kind: 'unit', orderId: o.id })}>+ Catat unit AC</Button></div>
+          </>
+        ) : <p className="hint" style={{ margin: 0 }}>Order ini belum terhubung ke data konsumen. Minta admin menyimpan ulang order.</p>}
       </fieldset>
 
       <FotoGaleri o={o} bisaTambah={o.status !== 'Batal'} />

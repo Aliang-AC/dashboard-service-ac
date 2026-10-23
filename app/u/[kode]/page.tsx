@@ -1,67 +1,111 @@
+import type { Metadata } from 'next';
 import { Suspense } from 'react';
-import { Logo } from '@/components/auth-shell';
+import { connection } from 'next/server';
 import { Button } from '@/components/ui/button';
-import { NAMA_USAHA, WA_USAHA, WA_USAHA_TAMPIL } from '@/lib/brand';
+import { KopPublik } from '@/components/publik/kop-publik';
+import { MEREK_ALIAS, MEREK_LENGKAP, WA_USAHA, WA_USAHA_TAMPIL } from '@/lib/brand';
 import { adminDb } from '@/lib/firebase-admin';
 import { fmtLong, todayWIB } from '@/lib/format';
 import { normOrder } from '@/lib/order';
-import { jadwalUnit, labelUnit } from '@/lib/servis';
-import type { Pelanggan } from '@/lib/types';
+import { jadwalUnit } from '@/lib/servis';
+import type { Pelanggan, Stiker, UnitAC } from '@/lib/types';
+import { isiTemplateScan, kodeDariTeks, POLA_KODE, specUnit } from '@/lib/unit';
 
-/* Halaman publik saat stiker QR di unit AC di-scan. Sengaja TIDAK menampilkan nama/alamat konsumen. */
+export const metadata: Metadata = { title: `Jadwal servis AC · ${MEREK_LENGKAP}` };
+
+/* Halaman publik saat stiker QR di-scan. Sengaja TIDAK menampilkan nama/alamat konsumen. */
 export default function Page({ params }: PageProps<'/u/[kode]'>) {
   return (
-    <main className="wrap" style={{ maxWidth: 480, paddingTop: 28, paddingBottom: 40 }}>
-      <div className="flex items-center gap-3" style={{ marginBottom: 18 }}>
-        <Logo />
-        <div><h1 className="text-2xl leading-none">{NAMA_USAHA}</h1><div className="muted text-sm">Service AC · WA {WA_USAHA_TAMPIL}</div></div>
-      </div>
+    <main className="wrap" style={{ maxWidth: 480, paddingTop: 16, paddingBottom: 40 }}>
+      <KopPublik />
       <Suspense fallback={<div className="empty">Memuat…</div>}><Isi params={params} /></Suspense>
     </main>
   );
 }
 
-async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
-  const kode = decodeURIComponent((await params).kode).toUpperCase().slice(0, 12);
-  const db = adminDb();
-  const q = /^GT-\d{4,}$/.test(kode) ? await db.collection('pelanggan').where('unitKodes', 'array-contains', kode).limit(1).get() : null;
-  const p = q && !q.empty ? ({ id: q.docs[0].id, ...q.docs[0].data() } as Pelanggan) : null;
-  const u = p?.units?.find(x => x.kode === kode);
-  if (!p || !u)
-    return (
-      <div className="panel" style={{ textAlign: 'center' }}>
-        <h3 className="justify-center">Kode unit tidak ditemukan</h3>
-        <p className="muted">Hubungi kami untuk bantuan servis AC.</p>
-        <Button nativeButton={false} render={<a href={`https://wa.me/${WA_USAHA}`} target="_blank" rel="noopener noreferrer" />}>Chat WhatsApp</Button>
+const waLink = (pesan?: string) => `https://wa.me/${WA_USAHA}${pesan ? `?text=${encodeURIComponent(pesan)}` : ''}`;
+
+function Kaki({ kode }: { kode: string }) {
+  return (
+    <p style={{ textAlign: 'center', fontSize: '.8rem', color: 'var(--ink-2)', marginTop: 14, lineHeight: 1.6 }}>
+      WA : {WA_USAHA_TAMPIL} (Admin)<br /><span className="mono" style={{ fontSize: '.68rem', opacity: .6 }}>{kode}</span>
+    </p>
+  );
+}
+
+function Pesan({ judul, isi, kode, pesan }: { judul: string; isi: string; kode: string; pesan: string }) {
+  return (
+    <>
+      <div className="panel" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10, padding: 20 }}>
+        <h3 className="justify-center" style={{ margin: 0 }}>{judul}</h3>
+        <p className="muted" style={{ margin: 0 }}>{isi}</p>
+        <Button size="lg" nativeButton={false} render={<a href={waLink(pesan)} target="_blank" rel="noopener noreferrer" />} style={{ background: '#1fa855' }}>💬 Chat {MEREK_ALIAS}</Button>
       </div>
-    );
+      <Kaki kode={kode} />
+    </>
+  );
+}
+
+async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
+  await connection(); // selalu dibaca saat diminta (data jadwal terbaru)
+  const kode = kodeDariTeks(decodeURIComponent((await params).kode));
+  if (!POLA_KODE.test(kode)) return <Pesan judul="Kode stiker tidak dikenal" isi="Silakan hubungi kami untuk bantuan servis AC." kode="" pesan={`Halo ${MEREK_ALIAS}, saya mau tanya servis AC.`} />;
+  const db = adminDb();
+  const [stSnap, setSnap] = await Promise.all([db.doc('stiker/' + kode).get(), db.doc('settings/usaha').get()]);
+  const st = stSnap.exists ? (stSnap.data() as Stiker) : null;
+
+  /* stiker baru (belum dipasang) / sudah diganti */
+  if (st?.status === 'kosong')
+    return <Pesan judul="Stiker belum aktif" isi="Stiker ini belum terhubung ke unit AC. Hubungi kami untuk servis AC Anda." kode={kode} pesan={`Halo ${MEREK_ALIAS}, saya mau servis AC (stiker ${kode}).`} />;
+  if (st?.status === 'diganti')
+    return <Pesan judul="Stiker sudah tidak berlaku" isi="Stiker ini sudah diganti dengan stiker baru. Hubungi kami bila perlu bantuan." kode={kode} pesan={`Halo ${MEREK_ALIAS}, saya mau servis AC (stiker lama ${kode}).`} />;
+
+  /* cari unitnya: lewat data stiker, atau (data lama) lewat kode di pelanggan */
+  let p: Pelanggan | null = null;
+  if (st?.pelangganId) {
+    const s = await db.doc('pelanggan/' + st.pelangganId).get();
+    p = s.exists ? ({ id: s.id, ...s.data() } as Pelanggan) : null;
+  } else {
+    const q = await db.collection('pelanggan').where('unitKodes', 'array-contains', kode).limit(1).get();
+    p = q.empty ? null : ({ id: q.docs[0].id, ...q.docs[0].data() } as Pelanggan);
+  }
+  const u: UnitAC | undefined = p?.units?.find(x => (st?.unitId ? x.id === st.unitId : x.kode === kode));
+  if (!p || !u) return <Pesan judul="Kode unit tidak ditemukan" isi="Silakan hubungi kami untuk bantuan servis AC." kode={kode} pesan={`Halo ${MEREK_ALIAS}, saya mau servis AC (kode ${kode}).`} />;
+
+  const pesan = isiTemplateScan(setSnap.get('templateScan') || '', { ...u, kode });
   const orders = (await db.collection('orders').where('pelangganId', '==', p.id).get()).docs.map(d => normOrder({ id: d.id, ...d.data() }));
   const j = jadwalUnit(u, orders, p.intervalBulan);
   const today = todayWIB();
   const waktunya = !j.berikut || j.berikut <= today;
-  const pesan = `Halo ${NAMA_USAHA}, saya mau pesan servis AC untuk unit ${kode} (${labelUnit(u)}).`;
+  const spec = specUnit(u);
+
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 20 }}>
-      <div>
-        <div className="sm">Kode unit</div>
-        <div className="mono" style={{ fontSize: '1.4rem', fontWeight: 600 }}>{kode}</div>
+    <>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="panel" style={{ padding: 16 }}>
+          {u.gedung && <div style={{ color: '#1d4fc4', fontWeight: 700, fontSize: '.85rem' }}>{u.gedung}</div>}
+          <div style={{ fontWeight: 800, fontSize: '1.15rem', lineHeight: 1.3 }}>{u.label || 'Unit AC'}</div>
+          {u.noAc && <span style={{ display: 'inline-block', marginTop: 4, background: '#eef3ff', color: '#123a9c', fontWeight: 700, fontSize: '.8rem', padding: '2px 8px', borderRadius: 6 }}>AC no. {u.noAc}</span>}
+          {spec && <div className="muted" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--line)' }}>{spec}</div>}
+          {u.nonaktif && <div className="pill" style={{ marginTop: 8 }}>Unit ini tercatat tidak aktif</div>}
+        </div>
+        {!u.nonaktif && (
+          <div className="panel" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="grid2">
+              <div><div className="sm">Servis terakhir</div><b>{j.terakhir ? fmtLong(j.terakhir) : 'Belum tercatat'}</b>{j.perkiraan && <div className="sm">(perkiraan)</div>}</div>
+              <div><div className="sm">Jadwal servis berikutnya</div><b>{j.berikut ? '± ' + fmtLong(j.berikut) : '—'}</b></div>
+            </div>
+            <div className={`pill ${waktunya ? 'warn' : 'good'}`} style={{ alignSelf: 'flex-start', fontSize: '.85rem', padding: '4px 12px' }}>
+              {waktunya ? 'Sudah waktunya dicuci' : `Cuci rutin tiap ${j.interval} bulan`}
+            </div>
+          </div>
+        )}
+        <Button size="lg" nativeButton={false} render={<a href={waLink(pesan)} target="_blank" rel="noopener noreferrer" />} style={{ background: '#1fa855', fontWeight: 700 }}>
+          💬 Chat {MEREK_ALIAS}
+        </Button>
+        <p className="hint" style={{ textAlign: 'center', margin: 0 }}>AC yang rutin dibersihkan lebih dingin, hemat listrik, dan awet.</p>
       </div>
-      <div>
-        <div className="sm">Unit AC</div>
-        <b style={{ fontSize: '1.1rem' }}>{u.label || 'AC'}</b>
-        <div className="muted">{[u.merk, u.pk && (/pk/i.test(u.pk) ? u.pk : u.pk + ' PK'), u.tipe].filter(Boolean).join(' · ') || '—'}</div>
-      </div>
-      <div className="grid2">
-        <div><div className="sm">Servis terakhir</div><b>{j.terakhir ? fmtLong(j.terakhir) : 'Belum tercatat'}</b>{j.perkiraan && <div className="sm">(perkiraan)</div>}</div>
-        <div><div className="sm">Jadwal cuci berikutnya</div><b>{j.berikut ? fmtLong(j.berikut) : '—'}</b></div>
-      </div>
-      <div className={`pill ${waktunya ? 'warn' : 'good'}`} style={{ alignSelf: 'flex-start', fontSize: '.85rem', padding: '4px 12px' }}>
-        {waktunya ? 'Sudah waktunya dicuci' : `Cuci rutin tiap ${j.interval} bulan`}
-      </div>
-      <Button size="lg" nativeButton={false} render={<a href={`https://wa.me/${WA_USAHA}?text=${encodeURIComponent(pesan)}`} target="_blank" rel="noopener noreferrer" />}>
-        Pesan servis via WhatsApp
-      </Button>
-      <p className="hint" style={{ textAlign: 'center' }}>AC yang rutin dibersihkan lebih dingin, hemat listrik, dan awet.</p>
-    </div>
+      <Kaki kode={kode} />
+    </>
   );
 }

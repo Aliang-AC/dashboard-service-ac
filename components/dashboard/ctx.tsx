@@ -5,10 +5,12 @@ import type { AllData, Result } from '@/lib/types';
 export type Tab = 'ringkasan' | 'order' | 'pelanggan' | 'stok' | 'absensi' | 'invoice' | 'catatan' | 'pengaturan';
 
 export type Modal =
-  | { kind: 'order'; id?: string; pelangganId?: string }
+  | { kind: 'order'; id?: string; pelangganId?: string; unitIds?: string[] }
   | { kind: 'pelanggan'; id?: string }
+  | { kind: 'stikerUnit'; pelangganId: string; unitId: string }
   | { kind: 'bayar'; id: string }
   | { kind: 'tugas'; id: string }
+  | { kind: 'unit'; orderId: string; unitId?: string }
   | { kind: 'rekapBaru' }
   | { kind: 'bagikanForm' }
   | { kind: 'bayarRekap'; id: string }

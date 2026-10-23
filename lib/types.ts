@@ -40,11 +40,24 @@ export type OrderInput = {
 /* Unit AC di lokasi konsumen. kode = kode unik di stiker QR (mis. GT-0042).
    servisTerakhir: diisi manual/perkiraan; yang dipakai = yang terbaru antara ini dan order Selesai untuk unit tsb. */
 export const TIPE_AC = ['Split', 'Cassette', 'Standing', 'Split duct', 'Window', 'Lainnya'] as const;
+export const FREON = ['R32', 'R410A', 'R22'] as const;
+/* spesifikasi AC lama yang sudah diganti (stiker tetap di titik yang sama) */
+export type RiwayatUnit = { merk?: string; pk?: string; tipe?: string; freon?: string; tahun?: string; sampai: string; ket: string; oleh: string };
+/* 1 unit = 1 titik AC (stiker ditempel dekat dudukan remote). label = ruangan, mis. "Ruang Immunologi".
+   gedung = salah satu dari Pelanggan.gedung (opsional); noAc = nomor AC / nomor aset instansi.
+   fotoIndoor/fotoOutdoor = id foto name plate di Drive. cek = dicatat teknisi, belum dicek admin. */
 export type UnitAC = {
-  id: string; kode?: string; label: string;  // label = ruangan/lokasi, mis. "Kamar depan"
-  merk?: string; pk?: string; tipe?: string; tahun?: string;
+  id: string; kode?: string; label: string;
+  gedung?: string; noAc?: string;
+  merk?: string; pk?: string; tipe?: string; freon?: string; tahun?: string;
   servisTerakhir?: string; perkiraan?: boolean; intervalBulan?: number;
+  catatan?: string; fotoIndoor?: string; fotoOutdoor?: string;
+  nonaktif?: boolean; riwayat?: RiwayatUnit[];
+  cek?: boolean; dicatat?: { oleh: string; at: number };
 };
+/* Stiker QR bernomor (koleksi stiker/{kode}). Dicetak kosong dulu, aktif saat dipasang ke unit. */
+export type StatusStiker = 'kosong' | 'aktif' | 'diganti';
+export type Stiker = { kode: string; status: StatusStiker; pelangganId?: string; unitId?: string; batch: number; dibuatAt: number; dipasang?: { oleh: string; at: number } };
 export const JENIS_PELANGGAN = ['Perorangan', 'Instansi'] as const;  // cara penagihan
 export const TIPE_LOKASI = ['Rumah', 'Kantor', 'Toko', 'Instansi', 'Lainnya'] as const;
 export const HASIL_PENGINGAT = ['Mau', 'Nanti', 'Tidak', 'Nomor salah'] as const;
@@ -60,6 +73,9 @@ export type Pelanggan = {
   pengingat?: Pengingat;    // hasil follow-up terakhir
   baru?: boolean;           // masuk dari form daftar online, belum dicek admin
   diingatkan?: string;      // (lama) tanggal terakhir dihubungi
+  cekTeknisi?: boolean;     // ada unit baru/diubah teknisi, belum dicek admin
+  gedung?: string[];        // daftar gedung/area (instansi, kantor) — unit memilih dari sini
+  updatedAt?: number;       // cegah simpan menimpa perubahan orang lain
 };
 
 /* hargaBeli disembunyikan (null) untuk selain pemilik */
@@ -94,7 +110,7 @@ export type Catatan = {
 };
 export type Layanan = { nama: string; harga: number };
 /* jamMasuk = Senin–Sabtu; jamMasukMinggu = khusus hari Minggu (kosong = sama dengan jamMasuk) */
-export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string; templateAjakForm?: string };
+export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string; templateAjakForm?: string; templateScan?: string };
 
 /* jam masuk yang berlaku untuk tanggal tertentu (YYYY-MM-DD) */
 export function jamMasukTgl(st: Pick<Settings, 'jamMasuk' | 'jamMasukMinggu'>, tanggal: string) {

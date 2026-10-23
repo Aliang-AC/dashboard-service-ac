@@ -45,25 +45,21 @@ export async function daftarKonsumen(v: DaftarInput): Promise<{ ok: true } | { o
 
     await db.runTransaction(async tx => {
       const ada = await tx.get(db.collection('pelanggan').where('hpNorm', '==', hpNorm).limit(1));
-      const counterRef = db.doc('counters/unit');
-      const counter = await tx.get(counterRef);
-      let n = counter.get('n') || 0;
       const lama = ada.empty ? null : ({ id: ada.docs[0].id, ...ada.docs[0].data() } as Pelanggan);
       const sudah = new Set((lama?.units || []).map(u => (u.label + '|' + (u.merk || '')).toLowerCase()));
       const baruUnits: UnitAC[] = unitsIn
         .filter(u => !sudah.has((u.label + '|' + u.merk).toLowerCase()))
         .map(u => ({
-          id: Math.random().toString(36).slice(2, 10), kode: 'GT-' + String(++n).padStart(4, '0'),
+          id: Math.random().toString(36).slice(2, 10), // stiker dipasang teknisi saat servis
           label: u.label, merk: u.merk, pk: u.pk, tipe: u.tipe,
           servisTerakhir: perkiraanTanggal(u.terakhir, today), perkiraan: u.terakhir !== 'lupa' && !!perkiraanTanggal(u.terakhir, today),
           intervalBulan: lama?.intervalBulan || 3,
         }));
-      if (n !== (counter.get('n') || 0)) tx.set(counterRef, { n });
       const maps = s(v.maps, 300), patokan = s(v.patokan, 200), alamat = s(v.alamat, 300);
       if (lama) {
         const units = [...(lama.units || []), ...baruUnits].slice(0, 60);
         tx.update(ada.docs[0].ref, {
-          units, unitKodes: units.map(u => u.kode).filter(Boolean), baru: true,
+          units, unitKodes: units.map(u => u.kode).filter(Boolean), baru: true, updatedAt: Date.now(),
           ...(alamat && !lama.alamat ? { alamat } : {}), ...(maps && !lama.maps ? { maps } : {}), ...(patokan && !lama.patokan ? { patokan } : {}),
           izinPengingat: !!v.izin,
         });
@@ -72,8 +68,8 @@ export async function daftarKonsumen(v: DaftarInput): Promise<{ ok: true } | { o
           nama, hp: s(v.hp, 30), hpNorm, alamat, maps, patokan,
           tipeLokasi: TIPE_LOKASI.includes(v.tipeLokasi as never) ? v.tipeLokasi : 'Rumah',
           jenis: v.tipeLokasi === 'Instansi' ? 'Instansi' : 'Perorangan', tempoHari: v.tipeLokasi === 'Instansi' ? 30 : 0,
-          intervalBulan: 3, units: baruUnits, unitKodes: baruUnits.map(u => u.kode), catatan: s(v.catatan, 1000),
-          sumber: 'Form online', izinPengingat: !!v.izin, baru: true, createdAt: Date.now(),
+          intervalBulan: 3, units: baruUnits, unitKodes: [], catatan: s(v.catatan, 1000),
+          sumber: 'Form online', izinPengingat: !!v.izin, baru: true, createdAt: Date.now(), updatedAt: Date.now(),
         });
       }
       if (v.mauServis) {

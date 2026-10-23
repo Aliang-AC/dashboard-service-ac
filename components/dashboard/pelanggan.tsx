@@ -1,15 +1,17 @@
 'use client';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { catatPengingat, hapusPelanggan, savePelanggan } from '@/app/actions';
 import { STATUS_CLS } from '@/lib/derive';
 import { fmtD, fmtLong, rp, waNumber } from '@/lib/format';
 import { ringkasItems, sisa } from '@/lib/order';
 import { jadwalUnit, labelUnit, perluDihubungi, type UnitJatuhTempo } from '@/lib/servis';
-import { JENIS_PELANGGAN, TIPE_AC, TIPE_LOKASI, type AllData, type Pelanggan, type UnitAC } from '@/lib/types';
+import { JENIS_PELANGGAN, TIPE_LOKASI, type AllData, type Pelanggan, type UnitAC } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { BayarPill, mapsUrl } from './order';
+import { DatalistUnit, GedungEditor, keUnitRows, UnitKartu, UnitPerGedung, unitRowBaru, type UnitRow } from './unit-admin';
 
 /* order milik pelanggan: lewat pelangganId, atau (order lama) nama yang sama */
 export const orderPelanggan = (d: AllData, p: Pelanggan) =>
@@ -78,7 +80,7 @@ function PerluDihubungi() {
   );
 }
 
-type Filter = 'Semua' | 'Perorangan' | 'Instansi' | 'Dihubungi' | 'Baru';
+type Filter = 'Semua' | 'Perorangan' | 'Instansi' | 'Dihubungi' | 'Baru' | 'Teknisi';
 
 export function PelangganView() {
   const { d, open } = useDash();
@@ -86,12 +88,13 @@ export function PelangganView() {
   const [f, setF] = useState<Filter>('Semua');
   const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
   const nBaru = d.pelanggan.filter(p => p.baru).length;
+  const nTek = d.pelanggan.filter(p => p.cekTeknisi).length;
   const qq = q.trim().toLowerCase();
   const rows = d.pelanggan
-    .filter(p => f === 'Semua' || (f === 'Baru' ? p.baru : p.jenis === f))
-    .filter(p => !qq || [p.nama, p.hp, p.alamat, ...(p.units || []).map(u => u.kode + ' ' + labelUnit(u))].join(' ').toLowerCase().includes(qq))
+    .filter(p => f === 'Semua' || (f === 'Baru' ? p.baru : f === 'Teknisi' ? p.cekTeknisi : p.jenis === f))
+    .filter(p => !qq || [p.nama, p.hp, p.alamat, ...(p.units || []).map(u => (u.kode || '') + ' ' + labelUnit(u)), ...(p.gedung || [])].join(' ').toLowerCase().includes(qq))
     .map(p => ({ p, ...infoServis(d, p) }))
-    .sort((a, b) => +!!b.p.baru - +!!a.p.baru || b.piutang - a.piutang || a.p.nama.localeCompare(b.p.nama));
+    .sort((a, b) => +!!b.p.baru - +!!a.p.baru || +!!b.p.cekTeknisi - +!!a.p.cekTeknisi || b.piutang - a.piutang || a.p.nama.localeCompare(b.p.nama));
 
   return (
     <>
@@ -100,7 +103,7 @@ export function PelangganView() {
         <div className="actions">
           <Button onClick={() => open({ kind: 'pelanggan' })}>+ Konsumen</Button>
           <Button variant="outline" onClick={() => open({ kind: 'bagikanForm' })}>Bagikan form daftar</Button>
-          <Button variant="outline" nativeButton={false} render={<a href="/stiker" target="_blank" rel="noopener" />}>Cetak stiker QR</Button>
+          <Button variant="outline" nativeButton={false} render={<a href="/stiker" target="_blank" rel="noopener" />}>Cetak stiker QR kosong</Button>
         </div>
       </div>
       <div className="toolbar">
@@ -109,6 +112,7 @@ export function PelangganView() {
           {JENIS_PELANGGAN.map(j => <button key={j} aria-pressed={f === j} onClick={() => setF(j)}>{j}</button>)}
           <button aria-pressed={f === 'Dihubungi'} onClick={() => setF('Dihubungi')}>Perlu dihubungi{nIngat ? ` · ${nIngat}` : ''}</button>
           {nBaru > 0 && <button aria-pressed={f === 'Baru'} onClick={() => setF('Baru')}>Baru dari form · {nBaru}</button>}
+          {nTek > 0 && <button aria-pressed={f === 'Teknisi'} onClick={() => setF('Teknisi')}>Baru dari teknisi · {nTek}</button>}
         </div>
         {f !== 'Dihubungi' && <input type="search" className="field" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari nama, no. HP, alamat, kode unit…" />}
       </div>
@@ -119,10 +123,10 @@ export function PelangganView() {
             <tbody>
               {rows.map(({ p, os, terakhir, berikut, piutang }) => (
                 <tr key={p.id} style={p.baru ? { background: 'var(--brand-soft)' } : undefined}>
-                  <td><button className="linkbtn" onClick={() => open({ kind: 'pelanggan', id: p.id })}><b>{p.nama}</b></button>{p.baru && <> <span className="pill brand">Baru dari form</span></>}{p.izinPengingat === false && <> <span className="pill">tanpa pengingat</span></>}
+                  <td><button className="linkbtn" onClick={() => open({ kind: 'pelanggan', id: p.id })}><b>{p.nama}</b></button>{p.baru && <> <span className="pill brand">Baru dari form</span></>}{p.cekTeknisi && <> <span className="pill brand">Baru dari teknisi</span></>}{p.izinPengingat === false && <> <span className="pill">tanpa pengingat</span></>}
                     <div className="sm">{p.hp}{p.alamat ? ' · ' + p.alamat : ''}</div></td>
                   <td><span className={`pill ${p.jenis === 'Instansi' ? 'brand' : ''}`}>{p.tipeLokasi || p.jenis}{p.jenis === 'Instansi' && p.tempoHari ? ` · tempo ${p.tempoHari} hr` : ''}</span></td>
-                  <td className="r num">{p.units?.length || 0}</td>
+                  <td className="r num">{(p.units || []).filter(u => !u.nonaktif).length}{p.gedung?.length ? <div className="sm">{p.gedung.length} gedung</div> : null}</td>
                   <td className="r num">{os.length}</td>
                   <td className="num">{terakhir ? fmtD(terakhir) : '—'}</td>
                   <td className="num">{berikut ? <span className={`pill ${berikut <= d.today ? 'warn' : ''}`}>{fmtD(berikut)}</span> : '—'}</td>
@@ -140,35 +144,42 @@ export function PelangganView() {
   );
 }
 
-let unitKey = 0;
-type UnitRow = UnitAC & { key: number };
-
 export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => void }) {
   const { d, run, open, go } = useDash();
   const p = id ? d.pelanggan.find(x => x.id === id) : undefined;
   const [jenis, setJenis] = useState<Pelanggan['jenis']>(p?.jenis || 'Perorangan');
-  const [units, setUnits] = useState<UnitRow[]>((p?.units || []).map(u => ({ ...u, key: ++unitKey })));
+  const [units, setUnits] = useState<UnitRow[]>(() => keUnitRows(p?.units || []));
+  const [gedung, setGedung] = useState<string[]>(p?.gedung || []);
+  const [versi] = useState(p?.updatedAt || 0); // versi data saat jendela dibuka (cegah menimpa perubahan teknisi)
+  const [awalJson] = useState(() => JSON.stringify([p?.units || [], p?.gedung || []]));
+  const [mode, setMode] = useState<'tabel' | 'ubah'>(p?.units?.length ? 'tabel' : 'ubah');
+  const [filterG, setFilterG] = useState('');
   const setU = (key: number, patch: Partial<UnitAC>) => setUnits(us => us.map(u => (u.key === key ? { ...u, ...patch } : u)));
   const info = p ? infoServis(d, p) : null;
   const intervalDef = p?.intervalBulan || 3;
+  const owner = d.me.peran === 'owner';
+  const berubah = () => JSON.stringify([units.map(({ key, ...u }) => (void key, u)), gedung]) !== awalJson;
+  const nCek = (p?.units || []).filter(u => u.cek).length;
+  const tampil = units.filter(u => !filterG || (filterG === '__tanpa' ? !u.gedung : u.gedung === filterG));
 
   return (
     <FormDialog
       title={p ? p.nama : 'Konsumen baru'}
       onClose={onClose}
-      submitLabel={p?.baru ? 'Simpan & tandai sudah dicek' : 'Simpan'}
+      submitLabel={p?.baru || p?.cekTeknisi ? 'Simpan & tandai sudah dicek' : 'Simpan'}
       onSubmit={async form => {
         const f = formObj(form);
         const r = await savePelanggan(p?.id || null, {
           nama: f.nama, hp: f.hp, alamat: f.alamat, maps: f.maps, patokan: f.patokan, tipeLokasi: f.tipeLokasi, sumber: f.sumber,
           jenis, tempoHari: jenis === 'Instansi' ? +f.tempoHari || 0 : 0, intervalBulan: +f.intervalBulan || 3,
-          izinPengingat: !!f.izinPengingat, units: units.map(({ key, ...u }) => (void key, u)), catatan: f.catatan,
+          izinPengingat: !!f.izinPengingat, units: units.map(({ key, ...u }) => (void key, u)), gedung, catatan: f.catatan, versi,
         });
         return run(Promise.resolve(r.ok ? { ok: true as const } : r), p ? 'Data konsumen diperbarui' : 'Konsumen ditambahkan');
       }}
-      onDelete={p && d.me.peran === 'owner' ? () => run(hapusPelanggan(p.id), 'Konsumen dihapus') : undefined}
+      onDelete={p && owner ? () => run(hapusPelanggan(p.id), 'Konsumen dihapus') : undefined}
     >
       {p?.baru && <p className="banner" style={{ margin: 0 }}>Konsumen ini mendaftar lewat form online. Periksa datanya, lalu klik “Simpan & tandai sudah dicek”.</p>}
+      {nCek > 0 && <p className="banner" style={{ margin: 0 }}>{nCek} unit baru dicatat / diubah teknisi di lapangan (bertanda “Baru dari teknisi”). Periksa datanya, lalu klik “Simpan & tandai sudah dicek”.</p>}
       <div className="grid2">
         <label className="lbl span2">Nama konsumen / instansi<input className="field" name="nama" required defaultValue={p?.nama || ''} autoFocus={!p} /></label>
         <label className="lbl">No. WhatsApp<input className="field" name="hp" inputMode="tel" defaultValue={p?.hp || ''} placeholder="08xxxxxxxxxx" /></label>
@@ -192,33 +203,46 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
         </label>
       </div>
 
+      {(jenis === 'Instansi' || gedung.length > 0) && <GedungEditor gedung={gedung} setGedung={setGedung} units={units} setUnits={setUnits} />}
+
       <fieldset className="box">
-        <legend>Unit AC · {units.length}</legend>
-        {units.map(u => {
-          const j = p ? jadwalUnit(u, info?.os || [], intervalDef) : null;
-          return (
-            <div key={u.key} className="panel" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div className="actions" style={{ justifyContent: 'space-between' }}>
-                <span className="sm">{u.kode ? <b className="mono">{u.kode}</b> : 'kode stiker dibuat saat disimpan'}{j?.berikut ? ` · jadwal berikut ${fmtD(j.berikut)}` : ''}</span>
-                <Button type="button" size="xs" variant="ghost" aria-label="Hapus unit" onClick={() => setUnits(us => us.filter(x => x.key !== u.key))}>Hapus</Button>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
-                <input className="field" placeholder="Ruangan (mis. Kamar depan)" value={u.label} onChange={e => setU(u.key, { label: e.target.value })} />
-                <input className="field" placeholder="Merk" value={u.merk || ''} onChange={e => setU(u.key, { merk: e.target.value })} list="merkOpsi" />
-                <input className="field" placeholder="PK (mis. 1)" value={u.pk || ''} onChange={e => setU(u.key, { pk: e.target.value })} />
-                <select className="field" value={u.tipe || 'Split'} onChange={e => setU(u.key, { tipe: e.target.value })}>{TIPE_AC.map(t => <option key={t}>{t}</option>)}</select>
-                <input className="field" placeholder="Tahun pasang" inputMode="numeric" value={u.tahun || ''} onChange={e => setU(u.key, { tahun: e.target.value })} />
-              </div>
-              <div className="grid2">
-                <label className="lbl">Servis terakhir {u.perkiraan ? '(perkiraan)' : ''}<input className="field" type="date" value={u.servisTerakhir || ''} max={d.today} onChange={e => setU(u.key, { servisTerakhir: e.target.value, perkiraan: false })} /></label>
-                <label className="lbl">Interval cuci (bulan)<input className="field" type="number" min={1} max={24} value={u.intervalBulan || intervalDef} onChange={e => setU(u.key, { intervalBulan: +e.target.value })} /></label>
-              </div>
-            </div>
-          );
-        })}
-        <datalist id="merkOpsi">{['Daikin', 'Panasonic', 'Sharp', 'LG', 'Samsung', 'Gree', 'Midea', 'Polytron', 'Aux', 'Mitsubishi', 'Toshiba', 'Changhong'].map(m => <option key={m} value={m} />)}</datalist>
-        <div><Button type="button" size="sm" variant="outline" onClick={() => setUnits(us => [...us, { key: ++unitKey, id: '', label: '', tipe: 'Split', intervalBulan: intervalDef }])}>+ Tambah unit AC</Button></div>
-        <p className="hint">Servis terakhir otomatis diperbarui setiap order untuk unit ini berstatus Selesai.</p>
+        <legend>Unit AC · {units.filter(u => !u.nonaktif).length}{units.some(u => u.nonaktif) ? ` (+${units.filter(u => u.nonaktif).length} tidak aktif)` : ''}</legend>
+        {p && p.units?.length ? (
+          <div className="seg" style={{ alignSelf: 'flex-start' }}>
+            <button type="button" aria-pressed={mode === 'tabel'} onClick={() => setMode('tabel')}>Daftar per gedung</button>
+            <button type="button" aria-pressed={mode === 'ubah'} onClick={() => setMode('ubah')}>Ubah data unit</button>
+          </div>
+        ) : null}
+        {p && mode === 'tabel' && p.units?.length ? (
+          <>
+            <UnitPerGedung d={d} p={p} os={info?.os || []} onOrder={ids => open({ kind: 'order', pelangganId: p.id, unitIds: ids })} />
+            {berubah() && <p className="hint" style={{ color: 'var(--warn)', margin: 0 }}>Ada perubahan yang belum disimpan — daftar ini menampilkan data tersimpan.</p>}
+          </>
+        ) : (
+          <>
+            {gedung.length > 0 && (
+              <label className="lbl" style={{ maxWidth: 320 }}>Tampilkan
+                <select className="field" value={filterG} onChange={e => setFilterG(e.target.value)}>
+                  <option value="">Semua gedung ({units.length})</option>
+                  {gedung.map(g => <option key={g} value={g}>{g} ({units.filter(u => u.gedung === g).length})</option>)}
+                  <option value="__tanpa">Tanpa gedung ({units.filter(u => !u.gedung).length})</option>
+                </select>
+              </label>
+            )}
+            {tampil.map(u => {
+              const j = p ? jadwalUnit(u, info?.os || [], intervalDef) : null;
+              return (
+                <UnitKartu key={u.key} u={u} setU={patch => setU(u.key, patch)} gedung={gedung} interval={intervalDef} today={d.today} owner={owner} namaSaya={d.me.nama}
+                  info={j?.berikut ? `jadwal berikut ${fmtD(j.berikut)}` : ''}
+                  onHapus={() => setUnits(us => us.filter(x => x.key !== u.key))}
+                  onStiker={p ? () => (berubah() ? toast.error('Simpan dulu perubahan di jendela ini, lalu buka lagi untuk mengatur stiker & foto.') : open({ kind: 'stikerUnit', pelangganId: p.id, unitId: u.id })) : undefined} />
+              );
+            })}
+            <DatalistUnit />
+            <div><Button type="button" size="sm" variant="outline" onClick={() => setUnits(us => [...us, unitRowBaru(intervalDef, filterG && filterG !== '__tanpa' ? filterG : '')])}>+ Tambah unit AC</Button></div>
+            <p className="hint" style={{ margin: 0 }}>Servis terakhir otomatis diperbarui setiap order untuk unit ini berstatus Selesai. AC yang dibongkar: klik “Tidak aktif” (data & riwayat tetap tersimpan, pengingat berhenti).{!owner && ' Menghapus unit hanya bisa oleh pemilik.'}</p>
+          </>
+        )}
       </fieldset>
 
       <label className="lbl">Catatan<textarea className="field" name="catatan" defaultValue={p?.catatan || ''} placeholder="mis. hubungi bagian umum, pak Andi" /></label>

@@ -12,6 +12,8 @@ import type { Result } from '@/lib/types';
 import { DashCtx, type Ctx, type Modal, type Tab } from './ctx';
 import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
+import { StikerUnitDialog } from './unit-admin';
+import { UnitLapanganDialog } from './unit-lapangan';
 import { BukaRollDialog, StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
 import { InvoiceView, BayarDialog } from './invoice';
@@ -127,10 +129,12 @@ export function Dashboard() {
             {tab === 'catatan' && <CatatanView />}
             {tab === 'pengaturan' && <Pengaturan />}
 
-            {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new-' + (modal.pelangganId || '')} id={modal.id} pelangganId={modal.pelangganId} onClose={close} />}
+            {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new-' + (modal.pelangganId || '')} id={modal.id} pelangganId={modal.pelangganId} unitIds={modal.unitIds} onClose={close} />}
+            {modal?.kind === 'stikerUnit' && <StikerUnitDialog key={modal.unitId} pelangganId={modal.pelangganId} unitId={modal.unitId} onClose={close} />}
             {modal?.kind === 'pelanggan' && <PelangganDialog key={modal.id || 'new'} id={modal.id} onClose={close} />}
             {modal?.kind === 'bayar' && <BayarDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'tugas' && <TugasDialog key={modal.id} id={modal.id} onClose={close} />}
+            {modal?.kind === 'unit' && <UnitLapanganDialog key={modal.orderId + (modal.unitId || 'baru')} orderId={modal.orderId} unitId={modal.unitId} onClose={close} />}
             {modal?.kind === 'rekapBaru' && <RekapBaruDialog onClose={close} />}
             {modal?.kind === 'bagikanForm' && <BagikanFormDialog onClose={close} />}
             {modal?.kind === 'bayarRekap' && <BayarRekapDialog id={modal.id} onClose={close} />}

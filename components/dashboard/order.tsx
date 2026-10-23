@@ -138,7 +138,7 @@ type ItemRow = { key: number; layanan: string; unit: string; qty: string; harga:
 type PartRow = { key: number; itemId: string; qty: string; harga: string };
 let rowKey = 0;
 
-export function OrderDialog({ id, onClose, pelangganId }: { id?: string; onClose: () => void; pelangganId?: string }) {
+export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string; onClose: () => void; pelangganId?: string; unitIds?: string[] }) {
   const { d, run } = useDash();
   const o: Order | undefined = id ? d.orders.find(x => x.id === id) : undefined;
   const lay = layanan(d);
@@ -172,7 +172,13 @@ export function OrderDialog({ id, onClose, pelangganId }: { id?: string; onClose
   /* pekerjaan, teknisi, sparepart */
   const [items, setItems] = useState<ItemRow[]>(o?.items.length
     ? o.items.map(i => ({ key: ++rowKey, layanan: i.layanan, unit: i.unit, qty: String(i.qty), harga: String(i.harga), unitId: i.unitId || '' }))
-    : [{ key: ++rowKey, layanan: lay[0]?.nama || '', unit: '', qty: '1', harga: String(tarif(lay[0]?.nama || '') || '') }]);
+    : unitIds?.length && awal
+      /* order untuk sekumpulan unit (mis. satu gedung): satu baris per unit, layanan bawaan "Cuci AC" */
+      ? (awal.units || []).filter(u => unitIds.includes(u.id)).map(u => {
+          const l = lay.find(x => /cuci/i.test(x.nama))?.nama || lay[0]?.nama || '';
+          return { key: ++rowKey, layanan: l, unit: labelUnit(u), qty: '1', harga: String(tarif(l) || ''), unitId: u.id };
+        })
+      : [{ key: ++rowKey, layanan: lay[0]?.nama || '', unit: '', qty: '1', harga: String(tarif(lay[0]?.nama || '') || '') }]);
   const setItem = (key: number, patch: Partial<ItemRow>) => setItems(xs => xs.map(x => (x.key === key ? { ...x, ...patch } : x)));
   const [teknisi, setTeknisi] = useState<string[]>(o?.teknisi || []);
   const [parts, setParts] = useState<PartRow[]>((o?.parts || []).map(p => ({ key: ++rowKey, itemId: p.itemId, qty: String(p.qty), harga: String(p.harga) })));

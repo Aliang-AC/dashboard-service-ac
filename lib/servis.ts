@@ -1,5 +1,6 @@
 /* Jadwal cuci AC per unit — dipakai server & browser (tanpa dependensi). */
 import type { Order, Pelanggan, UnitAC } from './types';
+import { lokasiUnit } from './unit';
 
 export const INTERVAL_DEFAULT = 3; // bulan
 
@@ -30,6 +31,7 @@ export type UnitJatuhTempo = UnitAC & { terakhir: string; berikut: string; perki
 export function unitPerluServis(p: Pelanggan, orders: Pick<Order, 'tanggal' | 'status' | 'items'>[], today: string): UnitJatuhTempo[] {
   const batas = geserHari(today, 7);
   return (p.units || [])
+    .filter(u => !u.nonaktif)
     .map(u => ({ ...u, ...jadwalUnit(u, orders, p.intervalBulan) }))
     .filter(u => !u.berikut || u.berikut <= batas);
 }
@@ -53,5 +55,5 @@ export function perkiraanTanggal(jawab: string, today: string) {
   return jawab in mundur ? geserHari(today, mundur[jawab]) : '';
 }
 
-export const labelUnit = (u: Pick<UnitAC, 'label' | 'merk' | 'pk' | 'tipe'>) =>
-  [u.label, [u.merk, u.pk && (/pk/i.test(u.pk) ? u.pk : u.pk + ' PK'), u.tipe].filter(Boolean).join(' ')].filter(Boolean).join(' – ');
+export const labelUnit = (u: Pick<UnitAC, 'label' | 'merk' | 'pk' | 'tipe' | 'gedung' | 'noAc'>) =>
+  [lokasiUnit(u), [u.merk, u.pk && (/pk/i.test(u.pk) ? u.pk : u.pk + ' PK'), u.tipe].filter(Boolean).join(' ')].filter(Boolean).join(' – ');

@@ -13,20 +13,10 @@ const unitKosong = (): U => ({ key: ++k, label: '', merk: '', pk: '', tipe: 'Spl
 
 export function FormDaftar() {
   const [units, setUnits] = useState<U[]>([unitKosong()]);
-  const [maps, setMaps] = useState('');
   const [busy, setBusy] = useState(false);
   const [selesai, setSelesai] = useState<{ nama: string; mau: boolean } | null>(null);
   const setU = (key: number, p: Partial<U>) => setUnits(us => us.map(u => (u.key === key ? { ...u, ...p } : u)));
 
-  const lokasi = () => {
-    if (!('geolocation' in navigator)) return toast.error('HP ini tidak mendukung lokasi.');
-    toast.info('Membaca lokasi…');
-    navigator.geolocation.getCurrentPosition(
-      p => { setMaps(`https://www.google.com/maps?q=${p.coords.latitude.toFixed(6)},${p.coords.longitude.toFixed(6)}`); toast.success('Lokasi tersimpan.'); },
-      () => toast.error('Lokasi tidak terbaca. Izinkan akses lokasi, atau lewati saja.'),
-      { enableHighAccuracy: true, timeout: 20000 },
-    );
-  };
 
   if (selesai)
     return (
@@ -45,7 +35,7 @@ export function FormDaftar() {
         const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
         setBusy(true);
         const r = await daftarKonsumen({
-          nama: f.nama, hp: f.hp, alamat: f.alamat, patokan: f.patokan, maps, tipeLokasi: f.tipeLokasi,
+          nama: f.nama, hp: f.hp, alamat: f.alamat, patokan: f.patokan, maps: '', tipeLokasi: f.tipeLokasi,
           units: units.map(({ key, ...u }) => (void key, u)), mauServis: !!f.mauServis, izin: !!f.izin, catatan: f.catatan, website: f.website,
         }).catch(() => null);
         setBusy(false);
@@ -62,10 +52,6 @@ export function FormDaftar() {
       </label>
       <label className="lbl">Alamat lengkap<textarea className="field" name="alamat" required placeholder="Jalan, nomor rumah, RT/RW, kelurahan" /></label>
       <label className="lbl">Patokan (opsional)<input className="field" name="patokan" placeholder="mis. depan masjid, pagar hijau" /></label>
-      <div className="actions">
-        <Button type="button" variant="outline" onClick={lokasi}>📍 Bagikan lokasi saya</Button>
-        {maps && <span className="sm">Lokasi tersimpan ✓</span>}
-      </div>
 
       <fieldset className="box">
         <legend>Unit AC Anda</legend>

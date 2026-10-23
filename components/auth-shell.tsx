@@ -2,9 +2,14 @@ import { Suspense } from 'react';
 import Image from 'next/image';
 import { APP_NAME } from '@/lib/brand';
 
-/* Logo CV Glory Teknik (public/logo.png, 142×169) */
+/* Logo GT (vektor): versi terang, dan versi huruf putih saat tema gelap */
 export function Logo({ size = 38 }: { size?: number }) {
-  return <Image src="/logo.png" alt="" aria-hidden width={Math.round((size * 142) / 169)} height={size} priority style={{ flex: 'none' }} />;
+  return (
+    <>
+      <Image src="/logo.svg" alt="" aria-hidden width={size} height={size} priority className="dark:hidden" style={{ flex: 'none' }} />
+      <Image src="/logo-gelap.svg" alt="" aria-hidden width={size} height={size} priority className="hidden dark:block" style={{ flex: 'none' }} />
+    </>
+  );
 }
 
 /* Bingkai halaman masuk/daftar & halaman pemberitahuan (belum ada akses, dsb). */

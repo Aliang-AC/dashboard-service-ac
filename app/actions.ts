@@ -13,11 +13,12 @@ import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
 import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { labelUnit, tambahBulan } from '@/lib/servis';
 import { pakaiRoll } from '@/lib/stok';
+import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, specUnit } from '@/lib/unit';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
   STATUS, ABS_ST, METODE, JENIS_PELANGGAN, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
   type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO, type Rekap,
-  type Pengingat, HASIL_PENGINGAT, TIPE_LOKASI,
+  type Pengingat, HASIL_PENGINGAT, TIPE_LOKASI, type RiwayatUnit, type Stiker, type StatusStiker,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
 } from '@/lib/types';
 
@@ -67,14 +68,14 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       db.doc('settings/usaha').get(),
       getLokasi(),
       me.peran === 'owner' ? db.doc('settings/backup').get() : null,
-      staff ? db.collection('pelanggan').get() : null,
+      db.collection('pelanggan').get(),
       fotoAktif(),
     ]);
     const rekap = staff ? await db.collection('rekap').orderBy('createdAt', 'desc').limit(300).get() : null;
     const arsipId = me.peran === 'owner' ? (await db.doc('settings/arsip').get()).get('absensiSheetId') : null;
 
     let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
-    let a = docs<Absensi>(absensi), c = docs<Catatan>(catatan);
+    let a = docs<Absensi>(absensi), c = docs<Catatan>(catatan), pl = docs<Pelanggan>(pelanggan);
     let st = (settings.data() as Settings) || {};
     const lok: Lokasi | null = staff ? lokasi : null;
 
@@ -89,13 +90,16 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       k = k.filter(x => x.id === kid).map(x => ({ ...x, akun: x.akun }));
       a = a.map(d => ({ ...d, records: d.records?.[kid] ? { [kid]: d.records[kid] } : {} }));
       c = c.filter(x => !x.untuk || x.untuk === kid);
+      /* konsumen dari order yang ia tangani (untuk mencatat unit AC & pasang stiker di lokasi) */
+      const pids = new Set(o.map(x => x.pelangganId).filter(Boolean));
+      pl = pl.filter(x => pids.has(x.id)).map(x => ({ ...x, tempoHari: 0, catatan: '', pengingat: undefined }));
       /* untuk laporan teknisi: nama layanan & barang stok saja, tanpa harga */
       s = s.map(x => ({ ...x, hargaBeli: null, hargaJual: 0 }));
       st = { nama: st.nama, jamMasuk: st.jamMasuk, jamMasukMinggu: st.jamMasukMinggu, layanan: (st.layanan || []).map(l => ({ nama: l.nama, harga: 0 })) };
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
-      pelanggan: pelanggan ? docs<Pelanggan>(pelanggan) : [], rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto,
+      pelanggan: pl, rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto,
       settings: st, lokasi: lok, today: todayWIB(),
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
@@ -149,14 +153,9 @@ const cleanItems = (items: OrderItem[]) => (items || []).slice(0, 40)
   .filter(i => i.layanan);
 const idAcak = () => Math.random().toString(36).slice(2, 10);
 
-/* Kode unit untuk stiker QR: GT-0001, GT-0002, … (counters/unit). Baca counter dulu (fase baca transaksi),
-   lalu beriKode() mengisi unit yang belum punya kode dan mengembalikan nilai counter baru. */
+/* Nomor stiker QR: GT-0001, GT-0002, … (counters/unit). Kode hanya diberikan saat stiker dicetak/dipasang. */
 const COUNTER_UNIT = () => adminDb().doc('counters/unit');
-function beriKode(units: UnitAC[], n: number) {
-  let next = n;
-  const hasil = units.map(u => (u.kode ? u : { ...u, kode: 'GT-' + String(++next).padStart(4, '0') }));
-  return { units: hasil, n: next };
-}
+const kodesDari = (units: UnitAC[]) => units.map(u => u.kode!).filter(Boolean);
 
 /* Unit dari baris order: pakai unitId yang dipilih, atau cocokkan label, atau buat unit baru. */
 function sambungUnit(lama: UnitAC[], items: OrderItem[], intervalDefault: number) {
@@ -208,7 +207,6 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         if (!q.empty) { pSnap = q.docs[0]; pRef = q.docs[0].ref; }
       }
       const pel = pSnap?.exists ? ({ id: pSnap.id, ...pSnap.data() } as Pelanggan) : null;
-      const unitCounter = await tx.get(COUNTER_UNIT());
 
       /* ---- hitung ---- */
       let invoice = old?.invoice || '', next = 0;
@@ -229,15 +227,14 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
 
       /* ---- tulis ---- */
       const pelRef = pRef && pSnap?.exists ? pRef : db.collection('pelanggan').doc();
-      /* baris order tersambung ke unit AC konsumen (unit baru dibuat + diberi kode stiker) */
+      /* baris order tersambung ke unit AC konsumen (unit baru dibuat tanpa stiker; stiker dipasang teknisi) */
       const sambung = sambungUnit(pel?.units || [], items, pel?.intervalBulan || 3);
-      const kode = beriKode(sambung.units, unitCounter.get('n') || 0);
-      if (kode.n !== (unitCounter.get('n') || 0)) tx.set(COUNTER_UNIT(), { n: kode.n });
-      const unitKodes = kode.units.map(u => u.kode!).filter(Boolean);
+      const unitKodes = kodesDari(sambung.units);
+      const unitBerubah = sambung.units.length !== (pel?.units || []).length;
       if (pel) {
-        tx.update(pelRef, { units: kode.units, unitKodes, ...(hp && !pel.hp ? { hp, hpNorm: normalHp(hp) || '' } : {}), ...(alamat && !pel.alamat ? { alamat } : {}) });
+        tx.update(pelRef, { units: sambung.units, unitKodes, ...(unitBerubah ? { updatedAt: Date.now() } : {}), ...(hp && !pel.hp ? { hp, hpNorm: normalHp(hp) || '' } : {}), ...(alamat && !pel.alamat ? { alamat } : {}) });
       } else {
-        tx.set(pelRef, { nama, hp, hpNorm: normalHp(hp) || '', alamat, maps: '', jenis: 'Perorangan', tempoHari: 0, intervalBulan: 3, units: kode.units, unitKodes, catatan: '', izinPengingat: true, sumber: 'Order', createdAt: Date.now() });
+        tx.set(pelRef, { nama, hp, hpNorm: normalHp(hp) || '', alamat, maps: '', jenis: 'Perorangan', tempoHari: 0, intervalBulan: 3, units: sambung.units, unitKodes, catatan: '', izinPengingat: true, sumber: 'Order', createdAt: Date.now(), updatedAt: Date.now() });
       }
       const doc: Omit<Order, 'id'> = {
         tanggal, jam, pelangganId: pelRef.id, pelanggan: nama, hp, alamat, teknisi,
@@ -531,16 +528,35 @@ export async function catatPengingat(pelangganId: string, hasil: Pengingat['hasi
 }
 
 /* ---------------- pelanggan ---------------- */
-type PelangganInput = Omit<Pelanggan, 'id' | 'createdAt' | 'pengingat' | 'baru' | 'diingatkan'>;
-const cleanUnit = (u: UnitAC, intervalDefault: number): UnitAC => ({
-  id: str(u.id, 20) || idAcak(), ...(u.kode ? { kode: str(u.kode, 12) } : {}), label: str(u.label, 80),
-  merk: str(u.merk, 40), pk: str(u.pk, 10), tipe: str(u.tipe, 20), tahun: str(u.tahun, 4),
+type PelangganInput = Omit<Pelanggan, 'id' | 'createdAt' | 'pengingat' | 'baru' | 'diingatkan' | 'updatedAt'> & { versi?: number };
+const cleanRiwayat = (r: unknown): RiwayatUnit[] => (Array.isArray(r) ? r : []).slice(-20).map((x: RiwayatUnit) => ({
+  merk: str(x?.merk, 40), pk: str(x?.pk, 10), tipe: str(x?.tipe, 20), freon: str(x?.freon, 12), tahun: str(x?.tahun, 4),
+  sampai: isDate(str(x?.sampai, 10)) ? str(x?.sampai, 10) : todayWIB(), ket: str(x?.ket, 200), oleh: str(x?.oleh, 80),
+}));
+/* bersihkan isian unit dari browser; kode stiker, foto & jejak pencatat diambil dari data server (tidak bisa diubah lewat form) */
+const cleanUnit = (u: UnitAC, intervalDefault: number, lama?: UnitAC): UnitAC => ({
+  id: lama?.id || idAcak(), ...(lama?.kode ? { kode: lama.kode } : {}),
+  label: str(u.label, 120), gedung: str(u.gedung, 60), noAc: str(u.noAc, 20),
+  merk: str(u.merk, 40), pk: str(u.pk, 10), tipe: str(u.tipe, 20), freon: str(u.freon, 12), tahun: str(u.tahun, 4),
   servisTerakhir: isDate(str(u.servisTerakhir, 10)) ? str(u.servisTerakhir, 10) : '', perkiraan: !!u.perkiraan,
   intervalBulan: Math.min(24, Math.max(1, Math.round(num(u.intervalBulan)) || intervalDefault || 3)),
+  catatan: str(u.catatan, 500), nonaktif: !!u.nonaktif, riwayat: cleanRiwayat(u.riwayat),
+  ...(lama?.fotoIndoor ? { fotoIndoor: lama.fotoIndoor } : {}), ...(lama?.fotoOutdoor ? { fotoOutdoor: lama.fotoOutdoor } : {}),
+  ...(lama?.dicatat ? { dicatat: lama.dicatat } : {}),
 });
+/* daftar gedung: unik (tanpa beda huruf besar/kecil), ditambah gedung yang dipakai unit */
+function rapikanGedung(daftar: string[], units: UnitAC[]) {
+  const hasil: string[] = [];
+  for (const g of [...(daftar || []), ...units.map(u => u.gedung || '')]) {
+    const n = str(g, 60);
+    if (n && !hasil.some(x => x.toLowerCase() === n.toLowerCase())) hasil.push(n);
+  }
+  return hasil.slice(0, 80);
+}
+const BENTROK = 'Data konsumen ini baru saja diubah orang lain (mis. teknisi di lapangan). Tutup jendela ini, buka lagi, lalu ulangi perubahan Anda.';
 
 export async function savePelanggan(id: string | null, v: PelangganInput): Promise<ResultOf<{ id: string }>> {
-  return guarded('admin', async () => {
+  return guarded('admin', async me => {
     const nama = str(v.nama, 120);
     if (!nama) throw new UserError('Nama pelanggan wajib diisi.');
     const hp = str(v.hp, 30);
@@ -548,19 +564,26 @@ export async function savePelanggan(id: string | null, v: PelangganInput): Promi
     const db = adminDb();
     const ref = id ? db.doc('pelanggan/' + str(id, 64)) : db.collection('pelanggan').doc();
     await db.runTransaction(async tx => {
-      const counter = await tx.get(COUNTER_UNIT());
-      if (id && !(await tx.get(ref)).exists) throw new UserError('Pelanggan tidak ditemukan.');
-      const units = (v.units || []).slice(0, 60).map(u => cleanUnit(u, intervalBulan)).filter(u => u.label || u.merk);
-      const kode = beriKode(units, counter.get('n') || 0);
-      if (kode.n !== (counter.get('n') || 0)) tx.set(COUNTER_UNIT(), { n: kode.n });
+      const snap = id ? await tx.get(ref) : null;
+      if (id && !snap?.exists) throw new UserError('Pelanggan tidak ditemukan.');
+      if (snap && (snap.get('updatedAt') || 0) > (num(v.versi) || 0)) throw new UserError(BENTROK);
+      const lama = new Map(((snap?.get('units') || []) as UnitAC[]).map(u => [u.id, u]));
+      const units = (v.units || []).slice(0, 300)
+        .map(u => cleanUnit(u, intervalBulan, lama.get(str(u.id, 20))))
+        .filter(u => u.label || u.merk || u.kode);
+      const dihapus = [...lama.values()].filter(u => !units.some(x => x.id === u.id));
+      if (dihapus.length && me.peran !== 'owner') throw new UserError('Hanya pemilik yang bisa menghapus unit AC. Gunakan "Tidak aktif" untuk AC yang dibongkar.');
+      /* unit dihapus (salah input): stikernya kembali kosong dan bisa dipasang ulang */
+      for (const u of dihapus) if (u.kode) tx.set(db.doc('stiker/' + u.kode), { status: 'kosong', pelangganId: FieldValue.delete(), unitId: FieldValue.delete() }, { merge: true });
       const doc = {
         nama, hp, hpNorm: normalHp(hp) || '', alamat: str(v.alamat, 300), maps: str(v.maps, 500), patokan: str(v.patokan, 200),
         jenis: JENIS_PELANGGAN.includes(v.jenis) ? v.jenis : 'Perorangan',
         tipeLokasi: TIPE_LOKASI.includes(v.tipeLokasi as never) ? v.tipeLokasi : 'Rumah', sumber: str(v.sumber, 60),
         tempoHari: Math.min(365, Math.max(0, Math.round(num(v.tempoHari)))), intervalBulan,
         izinPengingat: v.izinPengingat !== false,
-        units: kode.units, unitKodes: kode.units.map(u => u.kode!), catatan: str(v.catatan, 1000),
-        baru: false, // disimpan admin = sudah dicek
+        units, unitKodes: kodesDari(units), gedung: rapikanGedung(v.gedung || [], units), catatan: str(v.catatan, 1000),
+        baru: false, cekTeknisi: false, // disimpan admin = sudah dicek
+        updatedAt: Date.now(),
       };
       if (id) tx.update(ref, doc); else tx.set(ref, { ...doc, createdAt: Date.now() });
     });
@@ -568,9 +591,223 @@ export async function savePelanggan(id: string | null, v: PelangganInput): Promi
   });
 }
 
-/* hapus data pelanggan — khusus pemilik; order lama tetap ada (nama tersimpan di order) */
+/* hapus data pelanggan — khusus pemilik; order lama tetap ada (nama tersimpan di order); stiker unitnya kembali kosong */
 export async function hapusPelanggan(id: string): Promise<Result> {
-  return run('owner', async () => { await adminDb().doc('pelanggan/' + str(id, 64)).delete(); });
+  return run('owner', async () => {
+    const db = adminDb();
+    const ref = db.doc('pelanggan/' + str(id, 64));
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      for (const u of (s.get('units') || []) as UnitAC[]) if (u.kode) tx.set(db.doc('stiker/' + u.kode), { status: 'kosong', pelangganId: FieldValue.delete(), unitId: FieldValue.delete() }, { merge: true });
+      tx.delete(ref);
+    });
+  });
+}
+
+/* ---------------- stiker QR & unit AC di lapangan ---------------- */
+const cekKode = (teks: string) => {
+  const kode = kodeDariTeks(teks);
+  if (!POLA_KODE.test(kode)) throw new UserError('Kode stiker tidak terbaca. Contoh: GT-0015.');
+  return kode;
+};
+
+/* pemilik/admin: buat nomor stiker kosong untuk dicetak (maks. 120 = 10 lembar A4 sekali buat) */
+export async function buatStikerKosong(jumlah: number): Promise<ResultOf<{ dari: string; sampai: string }>> {
+  return guarded('admin', async me => {
+    const n = Math.min(120, Math.max(1, Math.round(num(jumlah))));
+    const db = adminDb();
+    return db.runTransaction(async tx => {
+      const c = await tx.get(COUNTER_UNIT());
+      const awal = (c.get('n') || 0) + 1, batch = Date.now();
+      for (let i = 0; i < n; i++) {
+        const kode = kodeStiker(awal + i);
+        tx.create(db.doc('stiker/' + kode), { kode, status: 'kosong', batch, dibuatAt: batch, oleh: me.nama });
+      }
+      tx.set(COUNTER_UNIT(), { n: awal + n - 1 });
+      return { dari: kodeStiker(awal), sampai: kodeStiker(awal + n - 1) };
+    });
+  });
+}
+
+/* pemilik/admin: beri nomor stiker langsung ke unit yang belum punya (mis. konsumen dari form), lalu dicetak per konsumen */
+export async function beriStikerUnit(pelangganId: string): Promise<ResultOf<{ jumlah: number }>> {
+  return guarded('admin', async me => {
+    const db = adminDb();
+    const ref = db.doc('pelanggan/' + str(pelangganId, 64));
+    return db.runTransaction(async tx => {
+      const [snap, c] = [await tx.get(ref), await tx.get(COUNTER_UNIT())];
+      if (!snap.exists) throw new UserError('Pelanggan tidak ditemukan.');
+      const units = ((snap.get('units') || []) as UnitAC[]).map(u => ({ ...u }));
+      let n = c.get('n') || 0, jumlah = 0;
+      for (const u of units) {
+        if (u.kode || u.nonaktif) continue;
+        u.kode = kodeStiker(++n); jumlah++;
+        tx.create(db.doc('stiker/' + u.kode), { kode: u.kode, status: 'aktif', pelangganId: snap.id, unitId: u.id, batch: Date.now(), dibuatAt: Date.now(), oleh: me.nama, dipasang: { oleh: me.nama, at: Date.now() } });
+      }
+      if (!jumlah) return { jumlah };
+      tx.set(COUNTER_UNIT(), { n });
+      tx.update(ref, { units, unitKodes: kodesDari(units), updatedAt: Date.now() });
+      return { jumlah };
+    });
+  });
+}
+
+/* pemilik/admin: daftar stiker yang belum terpasang (untuk cetak ulang) */
+export async function daftarStikerKosong(): Promise<ResultOf<Stiker[]>> {
+  return guarded('admin', async () => {
+    const q = await adminDb().collection('stiker').where('status', '==', 'kosong').get();
+    return q.docs.map(d => d.data() as Stiker).sort((a, b) => a.kode.localeCompare(b.kode));
+  });
+}
+
+export type InfoStiker = { kode: string; status: StatusStiker | 'tidak ada'; pelangganId?: string; unitId?: string; pelanggan?: string; alamat?: string; lokasi?: string; spec?: string };
+/* cek stiker sebelum dipasang: kalau sudah terpakai, tampilkan milik siapa */
+export async function cekStiker(teks: string): Promise<ResultOf<InfoStiker>> {
+  return guarded('karyawan', async () => {
+    const kode = cekKode(teks);
+    const db = adminDb();
+    const s = await db.doc('stiker/' + kode).get();
+    if (!s.exists) return { kode, status: 'tidak ada' };
+    const st = s.data() as Stiker;
+    if (st.status !== 'aktif' || !st.pelangganId) return { kode, status: st.status };
+    const p = await db.doc('pelanggan/' + st.pelangganId).get();
+    const u = ((p.get('units') || []) as UnitAC[]).find(x => x.id === st.unitId);
+    return { kode, status: 'aktif', pelangganId: st.pelangganId, unitId: st.unitId, pelanggan: p.get('nama') || '', alamat: p.get('alamat') || '', lokasi: u ? lokasiUnit(u) : '', spec: u ? specUnit(u) : '' };
+  });
+}
+
+/* Karyawan hanya boleh mengubah unit milik pelanggan dari order yang ia tangani. Dibaca di fase baca transaksi. */
+async function bacaIzinPelanggan(tx: Transaction, me: Me, pelangganId: string, orderId?: string) {
+  const db = adminDb();
+  let order: Order | null = null;
+  if (orderId) {
+    const o = await tx.get(db.doc('orders/' + str(orderId, 64)));
+    if (!o.exists) throw new UserError('Order tidak ditemukan.');
+    order = normOrder({ id: o.id, ...o.data() });
+    bolehOrder(me, order);
+    if (!pelangganId) pelangganId = order.pelangganId;
+    if (order.pelangganId !== pelangganId) throw new UserError('Unit ini bukan milik konsumen di order ini.');
+  } else if (me.peran === 'karyawan') throw new UserError('Buka dari tugas order untuk mencatat unit.');
+  if (!pelangganId) throw new UserError('Order ini belum terhubung ke data konsumen. Minta admin menyimpan ulang order.');
+  const ref = db.doc('pelanggan/' + str(pelangganId, 64));
+  const snap = await tx.get(ref);
+  if (!snap.exists) throw new UserError('Data konsumen tidak ditemukan.');
+  return { ref, snap, order, units: ((snap.get('units') || []) as UnitAC[]).map(u => ({ ...u })) };
+}
+
+/* pasang stiker ke unit (fase tulis). Stiker lama unit itu ditandai "Sudah diganti". */
+function tulisPasang(tx: Transaction, me: Me, stiker: DocumentSnapshot, pelangganId: string, unit: UnitAC) {
+  const kode = stiker.id;
+  if (!stiker.exists) throw new UserError(`Stiker ${kode} tidak terdaftar. Cek lagi nomornya.`);
+  const st = stiker.data() as Stiker;
+  if (st.status === 'aktif' && !(st.pelangganId === pelangganId && st.unitId === unit.id)) throw new UserError(`Stiker ${kode} sudah terpasang di unit lain.`);
+  if (st.status === 'diganti') throw new UserError(`Stiker ${kode} sudah tidak berlaku (pernah diganti). Pakai stiker lain.`);
+  const db = adminDb();
+  if (unit.kode && unit.kode !== kode) tx.set(db.doc('stiker/' + unit.kode), { status: 'diganti', digantiOleh: kode }, { merge: true });
+  tx.set(db.doc('stiker/' + kode), { status: 'aktif', pelangganId, unitId: unit.id, dipasang: { oleh: me.nama, at: Date.now() } }, { merge: true });
+  unit.kode = kode;
+}
+
+/* pasang / ganti stiker unit yang sudah ada (teknisi lewat order, atau admin dari data konsumen) */
+export async function pasangStiker(v: { pelangganId: string; unitId: string; kode: string; orderId?: string }): Promise<Result> {
+  return run('karyawan', async me => {
+    const kode = cekKode(v.kode);
+    const db = adminDb();
+    await db.runTransaction(async tx => {
+      const izin = await bacaIzinPelanggan(tx, me, str(v.pelangganId, 64), v.orderId);
+      const stiker = await tx.get(db.doc('stiker/' + kode));
+      const unit = izin.units.find(u => u.id === v.unitId);
+      if (!unit) throw new UserError('Unit tidak ditemukan. Muat ulang halaman.');
+      tulisPasang(tx, me, stiker, izin.snap.id, unit);
+      tx.update(izin.ref, { units: izin.units, unitKodes: kodesDari(izin.units), updatedAt: Date.now() });
+    });
+  });
+}
+
+export type UnitLapanganInput = {
+  orderId: string; unitId?: string; gantiUnit?: boolean; kode?: string;
+  gedung: string; label: string; noAc: string; merk: string; pk: string; tipe: string; freon: string; catatan: string;
+};
+/* Teknisi mencatat / memperbarui unit AC di lokasi (dari tugas order). gantiUnit: AC lama diganti baru → spesifikasi lama masuk riwayat.
+   Data masuk dengan tanda "Baru dari teknisi" sampai admin mengeceknya. */
+export async function simpanUnitLapangan(v: UnitLapanganInput): Promise<ResultOf<{ unitId: string }>> {
+  return guarded('karyawan', async me => {
+    const label = str(v.label, 120);
+    if (!label) throw new UserError('Isi nama ruangan.');
+    const kode = v.kode ? cekKode(v.kode) : '';
+    const db = adminDb();
+    return db.runTransaction(async tx => {
+      const izin = await bacaIzinPelanggan(tx, me, '', v.orderId);
+      const stiker = kode ? await tx.get(db.doc('stiker/' + kode)) : null;
+      const o = izin.order!;
+      if (o.status === 'Batal') throw new UserError('Order ini sudah dibatalkan admin.');
+      const daftarGedung: string[] = izin.snap.get('gedung') || [];
+      let gedung = str(v.gedung, 60);
+      const sama = gedung && daftarGedung.find(g => g.toLowerCase() === gedung.toLowerCase());
+      if (sama) gedung = sama;
+      const spec = { gedung, label, noAc: str(v.noAc, 20), merk: str(v.merk, 40), pk: str(v.pk, 10), tipe: str(v.tipe, 20), freon: str(v.freon, 12), catatan: str(v.catatan, 500) };
+      let unit = v.unitId ? izin.units.find(u => u.id === v.unitId) : undefined;
+      if (v.unitId && !unit) throw new UserError('Unit tidak ditemukan. Muat ulang halaman.');
+      if (unit) {
+        if (v.gantiUnit) {
+          unit.riwayat = [...(unit.riwayat || []), { merk: unit.merk || '', pk: unit.pk || '', tipe: unit.tipe || '', freon: unit.freon || '', tahun: unit.tahun || '', sampai: o.tanggal, ket: 'Diganti unit baru', oleh: me.nama }].slice(-20);
+          unit.tahun = ''; delete unit.fotoIndoor; delete unit.fotoOutdoor;
+        }
+        Object.assign(unit, spec);
+      } else {
+        if (izin.units.length >= 300) throw new UserError('Unit konsumen ini sudah terlalu banyak.');
+        unit = { id: idAcak(), ...spec, tipe: spec.tipe || 'Split', intervalBulan: +izin.snap.get('intervalBulan') || 3 };
+        izin.units.push(unit);
+      }
+      /* unit yang dicatat saat order ini = ikut diservis pada tanggal order */
+      if (!unit.servisTerakhir || unit.servisTerakhir < o.tanggal) { unit.servisTerakhir = o.tanggal; unit.perkiraan = false; }
+      unit.cek = true; unit.dicatat = { oleh: me.nama, at: Date.now() };
+      if (stiker) tulisPasang(tx, me, stiker, izin.snap.id, unit);
+      tx.update(izin.ref, {
+        units: izin.units, unitKodes: kodesDari(izin.units),
+        gedung: gedung && !sama ? [...daftarGedung, gedung].slice(0, 80) : daftarGedung,
+        cekTeknisi: true, updatedAt: Date.now(),
+      });
+      return { unitId: unit.id };
+    });
+  });
+}
+
+/* foto name plate indoor/outdoor unit (Drive). Foto lama di sisi yang sama dibuang ke Sampah Drive. */
+export async function fotoNameplate(v: { orderId?: string; pelangganId: string; unitId: string; sisi: 'indoor' | 'outdoor'; base64: string }): Promise<Result> {
+  return run('karyawan', async me => {
+    if (v.sisi !== 'indoor' && v.sisi !== 'outdoor') throw new UserError('Sisi foto tidak dikenal.');
+    const jpeg = Buffer.from(String(v.base64 || '').replace(/^data:image\/jpeg;base64,/, ''), 'base64');
+    if (jpeg.length < 1000 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new UserError('File foto tidak valid.');
+    if (jpeg.length > 2_500_000) throw new UserError('Foto terlalu besar.');
+    const db = adminDb();
+    /* cek izin & unit dulu sebelum upload */
+    const pra = await db.runTransaction(async tx => {
+      const izin = await bacaIzinPelanggan(tx, me, str(v.pelangganId, 64), v.orderId);
+      const u = izin.units.find(x => x.id === v.unitId);
+      if (!u) throw new UserError('Unit tidak ditemukan. Muat ulang halaman.');
+      return { nama: izin.snap.get('nama') as string, lokasi: lokasiUnit(u) };
+    });
+    let fileId: string;
+    try {
+      fileId = await uploadFoto(`Name plate ${v.sisi} ${pra.nama.slice(0, 40)} ${pra.lokasi.slice(0, 60)} ${todayWIB()}.jpg`.replace(/[\\/]/g, '-'), todayWIB().slice(0, 7), jpeg);
+    } catch (e) {
+      console.error(e);
+      const m = e instanceof Error ? e.message : '';
+      throw new UserError(m === 'FOTO_BELUM_AKTIF' ? 'Penyimpanan foto belum disambungkan pemilik (Pengaturan → Foto).' : 'Upload foto gagal. Coba lagi.');
+    }
+    const lamaId = await db.runTransaction(async tx => {
+      const izin = await bacaIzinPelanggan(tx, me, str(v.pelangganId, 64), v.orderId);
+      const u = izin.units.find(x => x.id === v.unitId);
+      if (!u) throw new UserError('Unit tidak ditemukan.');
+      const key = v.sisi === 'indoor' ? 'fotoIndoor' : 'fotoOutdoor';
+      const lama = u[key];
+      u[key] = fileId;
+      tx.update(izin.ref, { units: izin.units, fotoIds: FieldValue.arrayUnion(fileId), updatedAt: Date.now() });
+      return lama;
+    });
+    if (lamaId) try { await buangFoto(lamaId); } catch (e) { console.error(e); }
+  });
 }
 
 /* ---------------- stok (harga beli hanya bisa diubah pemilik) ---------------- */
@@ -950,6 +1187,13 @@ export async function saveTemplateAjak(teks: string): Promise<Result> {
     const t = str(teks, 1500);
     if (t && !t.includes('{link}')) throw new UserError('Pesan harus memuat {link} supaya link form ikut terkirim.');
     await adminDb().doc('settings/usaha').set({ templateAjakForm: t }, { merge: true });
+  });
+}
+
+/* pesan WA otomatis di halaman scan stiker ({kode}, {lokasi}, {ruangan}, {gedung}, {merk}) */
+export async function saveTemplateScan(teks: string): Promise<Result> {
+  return run('admin', async () => {
+    await adminDb().doc('settings/usaha').set({ templateScan: str(teks, 600) }, { merge: true });
   });
 }
 
