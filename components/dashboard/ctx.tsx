@@ -9,6 +9,8 @@ export type Modal =
   | { kind: 'pelanggan'; id?: string }
   | { kind: 'stikerUnit'; pelangganId: string; unitId: string }
   | { kind: 'bayar'; id: string }
+  | { kind: 'terbit'; id: string }
+  | { kind: 'infoInvoice'; id: string }
   | { kind: 'tugas'; id: string }
   | { kind: 'unit'; orderId: string; unitId?: string }
   | { kind: 'rekapBaru' }

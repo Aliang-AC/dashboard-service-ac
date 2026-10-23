@@ -28,7 +28,8 @@ export function Pengaturan() {
             return i > 0 ? { nama: l.slice(0, i).trim(), harga: +l.slice(i + 1).replace(/[^\d]/g, '') || 0 } : { nama: l, harga: 0 };
           });
           setBusy(true);
-          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, jamMasukMinggu: f.jamMasukMinggu, rekening: f.rekening, layanan: lay, templatePengingat: f.templatePengingat }), 'Pengaturan tersimpan');
+          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, jamMasukMinggu: f.jamMasukMinggu, rekening: f.rekening, layanan: lay, templatePengingat: f.templatePengingat,
+            rekeningInstansi: f.rekeningInstansi, penanggungJawab: f.penanggungJawab, jabatan: f.jabatan, email: f.email, npwp: f.npwp }), 'Pengaturan tersimpan');
           setBusy(false);
         }}>
         <div className="grid2">
@@ -37,7 +38,13 @@ export function Pengaturan() {
           <label className="lbl">No. HP / WA usaha<input className="field" name="hp" defaultValue={st.hp || ''} /></label>
           <label className="lbl">Jam masuk Senin–Sabtu<input className="field" type="time" name="jamMasuk" defaultValue={st.jamMasuk || '08:00'} /></label>
           <label className="lbl">Jam masuk hari Minggu<input className="field" type="time" name="jamMasukMinggu" defaultValue={st.jamMasukMinggu || ''} /></label>
-          <label className="lbl span2">Info pembayaran di invoice<textarea className="field" name="rekening" defaultValue={st.rekening || ''} placeholder="mis. Transfer BCA 123xxxx a.n. ..." /></label>
+          <label className="lbl span2">Alamat lengkap (tampil di kop invoice)<span className="hint">mis. Jalan MT Haryono KM 5, Sintang, Kalimantan Barat 78614 — isi di kolom Alamat di atas.</span></label>
+          <label className="lbl">Rekening pribadi (invoice perorangan)<textarea className="field" name="rekening" defaultValue={st.rekening || ''} placeholder="mis. BNI 123xxxx a/n ..." /></label>
+          <label className="lbl">Rekening atas nama CV (invoice instansi)<textarea className="field" name="rekeningInstansi" defaultValue={st.rekeningInstansi || ''} placeholder="kosong = pakai rekening pribadi" /></label>
+          <label className="lbl">Penanda tangan invoice resmi<input className="field" name="penanggungJawab" defaultValue={st.penanggungJawab || ''} placeholder="mis. Dedi" /></label>
+          <label className="lbl">Jabatan<input className="field" name="jabatan" defaultValue={st.jabatan || ''} placeholder="mis. Direktur" /></label>
+          <label className="lbl">Email usaha<input className="field" name="email" type="email" defaultValue={st.email || ''} placeholder="mis. cv.gloryteknik@gmail.com" /></label>
+          <label className="lbl">NPWP (opsional)<input className="field" name="npwp" defaultValue={st.npwp || ''} placeholder="dicetak di kop invoice resmi" /></label>
           <label className="lbl span2">Daftar layanan &amp; tarif per unit
             <textarea className="field mono" name="layanan" style={{ minHeight: 160 }} defaultValue={lay.map(l => `${l.nama} = ${+l.harga || 0}`).join('\n')} />
           </label>

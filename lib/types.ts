@@ -7,7 +7,12 @@ export type Metode = (typeof METODE)[number];
 export type Pembayaran = { id: string; tanggal: string; jumlah: number; metode: Metode; ket: string; oleh: string; at: number };
 export type BayarStatus = 'Lunas' | 'Sebagian' | 'Belum dibayar';
 
-/* Bentuk order yang dipakai aplikasi (order lama dinormalkan otomatis lewat lib/order.ts → normOrder). */
+/* Isian khusus invoice (bisa diubah admin): model kop, Kepada Yth./u.p., perihal, no. referensi instansi, catatan. */
+export const MODEL_INVOICE = ['biasa', 'resmi'] as const;
+export type InfoInvoice = { model?: (typeof MODEL_INVOICE)[number]; kepada?: string; perihal?: string; noRef?: string; catatan?: string; diubah?: { oleh: string; at: number }[] };
+/* Bentuk order yang dipakai aplikasi (order lama dinormalkan otomatis lewat lib/order.ts → normOrder).
+   Instansi: order selesai dulu (belumDitagih), invoice + nomornya diterbitkan admin belakangan.
+   jatuhTempo '' = tempo belum pasti. tglInvoice = tanggal invoice diterbitkan. */
 export type Order = {
   id: string;
   tanggal: string; jam: string;
@@ -18,6 +23,7 @@ export type Order = {
   pembayaran: Pembayaran[]; dibayar: number; bayar: BayarStatus; jatuhTempo: string;
   foto: Foto[]; catatanTeknisi: string;
   rekapId: string; // kalau ditagih lewat invoice gabungan bulanan
+  belumDitagih: boolean; tglInvoice: string; inv: InfoInvoice;
   invoice: string; createdAt: number; updatedAt: number; paidAt: string | null;
 };
 /* Invoice gabungan bulanan untuk instansi: mengelompokkan beberapa order; total/sisa dihitung dari order-ordernya */
@@ -70,6 +76,7 @@ export type Pelanggan = {
   units: UnitAC[]; catatan: string; createdAt: number;
   patokan?: string; tipeLokasi?: string; sumber?: string;
   izinPengingat?: boolean;  // default true
+  rekening?: 'cv' | 'pribadi'; // rekening yang dicetak di invoice (kosong = instansi→CV, perorangan→pribadi)
   pengingat?: Pengingat;    // hasil follow-up terakhir
   baru?: boolean;           // masuk dari form daftar online, belum dicek admin
   diingatkan?: string;      // (lama) tanggal terakhir dihubungi
@@ -109,8 +116,14 @@ export type Catatan = {
   pelanggan: string; untuk: string; selesai: boolean; doneAt?: number; createdAt: number;
 };
 export type Layanan = { nama: string; harga: number };
-/* jamMasuk = Senin–Sabtu; jamMasukMinggu = khusus hari Minggu (kosong = sama dengan jamMasuk) */
-export type Settings = { nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[]; templatePengingat?: string; templateAjakForm?: string; templateScan?: string };
+/* jamMasuk = Senin–Sabtu; jamMasukMinggu = khusus hari Minggu (kosong = sama dengan jamMasuk).
+   rekening = rekening pribadi (invoice perorangan); rekeningInstansi = rekening atas nama CV (invoice instansi).
+   penanggungJawab/jabatan/email/npwp = untuk kop & tanda tangan invoice resmi. */
+export type Settings = {
+  nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[];
+  templatePengingat?: string; templateAjakForm?: string; templateScan?: string;
+  rekeningInstansi?: string; penanggungJawab?: string; jabatan?: string; email?: string; npwp?: string;
+};
 
 /* jam masuk yang berlaku untuk tanggal tertentu (YYYY-MM-DD) */
 export function jamMasukTgl(st: Pick<Settings, 'jamMasuk' | 'jamMasukMinggu'>, tanggal: string) {

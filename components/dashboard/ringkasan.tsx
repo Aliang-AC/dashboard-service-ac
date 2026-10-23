@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { ringkasRoll, totalStok } from '@/lib/stok';
 import { absToday, activeKar, dueNotes, isLow, omzetOrders, STATUS_CLS, unpaid } from '@/lib/derive';
 import { addDays, fmtD, monthKey, rp, short } from '@/lib/format';
-import { ringkasItems, sisa } from '@/lib/order';
+import { ringkasItems, sisa, telatBayar, umurPiutang } from '@/lib/order';
 import type { AllData } from '@/lib/types';
 import { useDash, type Tab } from './ctx';
 import { namaTeknisi } from './order';
@@ -28,26 +28,25 @@ export function Ringkasan() {
   const jobsToday = d.orders.filter(o => o.tanggal === t && o.status !== 'Batal').sort((a, b) => (a.jam || '99').localeCompare(b.jam || '99'));
   const up = unpaid(d);
   const sisaSum = up.reduce((a, o) => a + sisa(o), 0);
-  const lewatTempo = d.orders.filter(o => o.status !== 'Batal' && o.bayar !== 'Lunas' && o.jatuhTempo < t);
+  const lewatTempo = d.orders.filter(o => telatBayar(o, t));
   const low = d.stok.filter(isLow);
   const recs = absToday(d), kar = activeKar(d);
   const hadir = kar.filter(k => recs[k.id]?.status === 'Hadir').length;
   const resched = d.orders.filter(o => o.status === 'Jadwal ulang');
-  /* order instansi dari bulan-bulan sebelumnya yang belum lunas & belum masuk rekap */
-  const instansi = new Set(d.pelanggan.filter(p => p.jenis === 'Instansi').map(p => p.id));
+  /* pekerjaan instansi yang sudah selesai tapi belum ditagih (invoice belum diterbitkan / belum masuk rekap) */
   const belumRekap = new Map<string, { nama: string; n: number }>();
-  d.orders.filter(o => instansi.has(o.pelangganId) && monthKey(o.tanggal) < m && o.status !== 'Batal' && !o.rekapId && o.bayar !== 'Lunas')
+  d.orders.filter(o => o.belumDitagih && o.status === 'Selesai' && !o.rekapId)
     .forEach(o => { const x = belumRekap.get(o.pelangganId) || { nama: o.pelanggan, n: 0 }; x.n++; belumRekap.set(o.pelangganId, x); });
   const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
   const nBaru = d.pelanggan.filter(p => p.baru).length;
 
   const attention: { k: string; t: string; m: string; go: Tab }[] = [
-    ...[...belumRekap.values()].map(x => ({ k: 'warn', t: `Belum direkap: ${x.nama}`, m: `${x.n} order bulan lalu belum ditagih lewat rekap bulanan`, go: 'invoice' as Tab })),
+    ...[...belumRekap.values()].map(x => ({ k: 'warn', t: `Belum ditagih: ${x.nama}`, m: `${x.n} pekerjaan selesai belum diterbitkan invoice-nya`, go: 'invoice' as Tab })),
     ...(nIngat ? [{ k: 'warn', t: `Perlu dihubungi: ${nIngat} konsumen`, m: 'Unit AC-nya sudah waktunya dicuci — kirim pengingat WhatsApp', go: 'pelanggan' as Tab }] : []),
     ...(nBaru ? [{ k: 'brand', t: `${nBaru} konsumen baru dari form daftar`, m: 'Cek & lengkapi datanya di tab Pelanggan', go: 'pelanggan' as Tab }] : []),
     ...dueNotes(d).map(n => ({ k: n.tanggal < t ? 'bad' : 'warn', t: `${n.tanggal < t ? 'Terlambat' : 'Hari ini'}: ${n.judul}`, m: n.tipe, go: 'catatan' as Tab })),
     ...resched.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${ringkasItems(o.items)} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
-    ...lewatTempo.map(o => ({ k: 'bad', t: `Lewat jatuh tempo: ${o.pelanggan}`, m: `${o.invoice} · sisa ${rp(sisa(o))} · tempo ${fmtD(o.jatuhTempo)}`, go: 'invoice' as Tab })),
+    ...lewatTempo.map(o => ({ k: 'bad', t: `Lewat jatuh tempo: ${o.pelanggan}`, m: `${o.invoice} · sisa ${rp(sisa(o))} · tempo ${fmtD(o.jatuhTempo)} (${umurPiutang(o, t)} hari sejak invoice)`, go: 'invoice' as Tab })),
     ...low.map(s => ({ k: totalStok(s) <= 0 ? 'bad' : 'warn', t: `Stok ${totalStok(s) <= 0 ? 'habis' : 'menipis'}: ${s.nama}`, m: `Sisa ${s.roll ? ringkasRoll(s) : `${totalStok(s)} ${s.satuan || ''}`} · minimum ${+s.min || 0}`, go: 'stok' as Tab })),
   ];
 

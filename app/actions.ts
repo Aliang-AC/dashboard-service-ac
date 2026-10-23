@@ -16,7 +16,7 @@ import { pakaiRoll } from '@/lib/stok';
 import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, specUnit } from '@/lib/unit';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
-  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
+  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, MODEL_INVOICE, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
   type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO, type Rekap,
   type Pengingat, HASIL_PENGINGAT, TIPE_LOKASI, type RiwayatUnit, type Stiker, type StatusStiker,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
@@ -209,8 +209,10 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
       const pel = pSnap?.exists ? ({ id: pSnap.id, ...pSnap.data() } as Pelanggan) : null;
 
       /* ---- hitung ---- */
+      /* order instansi baru: belum ditagih — nomor invoice dibuat saat admin menerbitkan invoice */
+      const belumDitagih = old ? old.belumDitagih : pel?.jenis === 'Instansi';
       let invoice = old?.invoice || '', next = 0;
-      if (!old) { next = (counter?.get('n') || 0) + 1; invoice = `INV/${tanggal.slice(0, 4)}/${tanggal.slice(5, 7)}/${String(next).padStart(4, '0')}`; }
+      if (!old && !belumDitagih) { next = (counter?.get('n') || 0) + 1; invoice = `INV/${tanggal.slice(0, 4)}/${tanggal.slice(5, 7)}/${String(next).padStart(4, '0')}`; }
       const parts: Part[] = rawParts.map(p => {
         const s = stokSnaps.get(p.itemId);
         const prev = old?.parts?.find(x => x.itemId === p.itemId);
@@ -223,7 +225,8 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         pembayaran.push({ id: 'p' + Date.now().toString(36), tanggal, jumlah: total, metode: input.bayarAwal, ket: 'Bayar saat order', oleh: me.nama, at: Date.now() });
       const dibayar = jumlahBayar(pembayaran), bayar = statusBayar(total, dibayar);
       const tempo = pel?.jenis === 'Instansi' ? Math.max(0, pel.tempoHari || 0) : 0;
-      const jatuhTempo = isDate(str(input.jatuhTempo, 10)) ? str(input.jatuhTempo, 10) : addDays(tanggal, tempo);
+      const jt = str(input.jatuhTempo, 10);
+      const jatuhTempo = belumDitagih ? '' : isDate(jt) ? jt : old ? '' : addDays(tanggal, tempo);
 
       /* ---- tulis ---- */
       const pelRef = pRef && pSnap?.exists ? pRef : db.collection('pelanggan').doc();
@@ -241,10 +244,11 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         items: sambung.items, parts, diskon, total, status, ket: str(input.ket, 1000),
         pembayaran, dibayar, bayar, jatuhTempo,
         foto: old?.foto || [], catatanTeknisi: old?.catatanTeknisi || '', rekapId: old?.rekapId || '',
+        belumDitagih, tglInvoice: old?.tglInvoice || tanggal, inv: old?.inv || {},
         invoice, createdAt: old?.createdAt || Date.now(), updatedAt: Date.now(),
         paidAt: bayar === 'Lunas' ? old?.paidAt || todayWIB() : null,
       };
-      if (!old) tx.set(counterRef, { n: next });
+      if (next) tx.set(counterRef, { n: next });
       tx.set(ref, { ...doc, fotoIds: doc.foto.map(f => f.id) }); // fotoIds: indeks untuk cek akses foto
       applyStock(tx, stokSnaps, old, { id: ref.id, ...doc });
     });
@@ -313,6 +317,56 @@ export async function tambahPembayaran(id: string, v: { tanggal: string; jumlah:
 /* hapus catatan pembayaran (salah input) — khusus pemilik */
 export async function hapusPembayaran(id: string, pid: string): Promise<Result> {
   return run('owner', async () => { await ubahPembayaran(id, p => p.filter(x => x.id !== pid)); });
+}
+
+/* ---------------- invoice: terbitkan & ubah isian ---------------- */
+/* Terbitkan invoice untuk order yang belum ditagih (instansi): nomor invoice dibuat menurut bulan tanggal invoice.
+   jatuhTempo '' = tempo belum pasti. */
+export async function terbitkanInvoice(id: string, tglInvoice: string, jatuhTempo: string): Promise<ResultOf<{ invoice: string }>> {
+  return guarded('admin', async () => {
+    const tgl = str(tglInvoice, 10), jt = str(jatuhTempo, 10);
+    if (!isDate(tgl)) throw new UserError('Tanggal invoice tidak valid.');
+    if (jt && (!isDate(jt) || jt < tgl)) throw new UserError('Jatuh tempo tidak valid (harus sesudah tanggal invoice).');
+    const db = adminDb();
+    const ref = db.doc('orders/' + str(id, 64));
+    return db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new UserError('Order tidak ditemukan.');
+      const o = normOrder({ id: s.id, ...s.data() });
+      if (o.status === 'Batal') throw new UserError('Order ini sudah dibatalkan.');
+      if (!o.belumDitagih) throw new UserError('Invoice order ini sudah diterbitkan.');
+      const counterRef = db.doc(`counters/inv-${tgl.slice(0, 7)}`);
+      const n = ((await tx.get(counterRef)).get('n') || 0) + 1;
+      const invoice = `INV/${tgl.slice(0, 4)}/${tgl.slice(5, 7)}/${String(n).padStart(4, '0')}`;
+      tx.set(counterRef, { n });
+      tx.update(ref, { invoice, belumDitagih: false, tglInvoice: tgl, jatuhTempo: jt, updatedAt: Date.now() });
+      return { invoice };
+    });
+  });
+}
+
+export type InfoInvoiceInput = { model: string; kepada: string; perihal: string; noRef: string; catatan: string; tglInvoice: string; jatuhTempo: string };
+/* Ubah isian invoice (Kepada Yth., perihal, no. referensi, catatan, model kop, tanggal, jatuh tempo).
+   Nomor invoice tetap. Invoice yang sudah lunas hanya bisa diubah pemilik. Setiap perubahan dicatat. */
+export async function simpanInfoInvoice(id: string, v: InfoInvoiceInput): Promise<Result> {
+  return run('admin', async me => {
+    const tgl = str(v.tglInvoice, 10), jt = str(v.jatuhTempo, 10);
+    if (tgl && !isDate(tgl)) throw new UserError('Tanggal invoice tidak valid.');
+    if (jt && !isDate(jt)) throw new UserError('Jatuh tempo tidak valid.');
+    const db = adminDb();
+    const ref = db.doc('orders/' + str(id, 64));
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new UserError('Order tidak ditemukan.');
+      const o = normOrder({ id: s.id, ...s.data() });
+      if (o.bayar === 'Lunas' && me.peran !== 'owner') throw new UserError('Invoice yang sudah lunas hanya bisa diubah pemilik.');
+      const inv = {
+        model: MODEL_INVOICE.includes(v.model as never) ? v.model : '', kepada: str(v.kepada, 300), perihal: str(v.perihal, 200),
+        noRef: str(v.noRef, 80), catatan: str(v.catatan, 1000), diubah: [...(o.inv.diubah || []), { oleh: me.nama, at: Date.now() }].slice(-20),
+      };
+      tx.update(ref, { inv, ...(tgl && !o.belumDitagih ? { tglInvoice: tgl } : {}), ...(!o.belumDitagih ? { jatuhTempo: jt } : {}), updatedAt: Date.now() });
+    });
+  });
 }
 
 /* ---------------- teknisi di lapangan ---------------- */
@@ -444,7 +498,7 @@ export async function setDriveFoto(link: string): Promise<ResultOf<{ nama: strin
 export async function buatRekap(pelangganId: string, bulan: string, orderIds: string[], jatuhTempo: string): Promise<ResultOf<{ id: string }>> {
   return guarded('admin', async me => {
     if (!/^\d{4}-\d{2}$/.test(bulan)) throw new UserError('Bulan tidak valid.');
-    if (!isDate(jatuhTempo)) throw new UserError('Jatuh tempo tidak valid.');
+    if (jatuhTempo && !isDate(jatuhTempo)) throw new UserError('Jatuh tempo tidak valid.');
     const ids = [...new Set((orderIds || []).map(x => str(x, 64)).filter(Boolean))].slice(0, 200);
     if (!ids.length) throw new UserError('Pilih minimal satu order.');
     const db = adminDb();
@@ -458,15 +512,17 @@ export async function buatRekap(pelangganId: string, bulan: string, orderIds: st
       for (const s of snaps) {
         if (!s.exists) throw new UserError('Ada order yang sudah dihapus. Muat ulang lalu coba lagi.');
         const o = normOrder({ id: s.id, ...s.data() });
-        if (o.pelangganId !== pSnap.id) throw new UserError(`Order ${o.invoice} bukan milik pelanggan ini.`);
-        if (o.rekapId) throw new UserError(`Order ${o.invoice} sudah masuk rekap lain.`);
-        if (o.status === 'Batal') throw new UserError(`Order ${o.invoice} sudah dibatalkan.`);
+        const nm = o.invoice || `tanggal ${o.tanggal}`;
+        if (o.pelangganId !== pSnap.id) throw new UserError(`Order ${nm} bukan milik pelanggan ini.`);
+        if (o.rekapId) throw new UserError(`Order ${nm} sudah masuk rekap lain.`);
+        if (o.status === 'Batal') throw new UserError(`Order ${nm} sudah dibatalkan.`);
       }
       const n = (c.get('n') || 0) + 1;
       const nomor = `REK/${todayWIB().slice(0, 4)}/${todayWIB().slice(5, 7)}/${String(n).padStart(4, '0')}`;
       tx.set(counterRef, { n });
       tx.set(ref, { nomor, pelangganId: pSnap.id, pelanggan: pSnap.get('nama'), bulan, orderIds: ids, tanggal: todayWIB(), jatuhTempo, createdAt: Date.now(), oleh: me.nama });
-      for (const s of snaps) tx.update(s.ref, { rekapId: ref.id, jatuhTempo, updatedAt: Date.now() });
+      /* order yang belum ditagih ikut tertagih lewat rekap ini */
+      for (const s of snaps) tx.update(s.ref, { rekapId: ref.id, jatuhTempo, ...(s.get('belumDitagih') ? { belumDitagih: false, tglInvoice: todayWIB() } : {}), updatedAt: Date.now() });
     });
     return { id: ref.id };
   });
@@ -581,6 +637,7 @@ export async function savePelanggan(id: string | null, v: PelangganInput): Promi
         tipeLokasi: TIPE_LOKASI.includes(v.tipeLokasi as never) ? v.tipeLokasi : 'Rumah', sumber: str(v.sumber, 60),
         tempoHari: Math.min(365, Math.max(0, Math.round(num(v.tempoHari)))), intervalBulan,
         izinPengingat: v.izinPengingat !== false,
+        rekening: v.rekening === 'cv' || v.rekening === 'pribadi' ? v.rekening : '',
         units, unitKodes: kodesDari(units), gedung: rapikanGedung(v.gedung || [], units), catatan: str(v.catatan, 1000),
         baru: false, cekTeknisi: false, // disimpan admin = sudah dicek
         updatedAt: Date.now(),
@@ -1177,6 +1234,8 @@ export async function saveSettings(v: Settings): Promise<Result> {
       nama: str(v.nama, 120), alamat: str(v.alamat, 300), hp: str(v.hp, 30), jamMasuk, jamMasukMinggu, rekening: str(v.rekening, 1000),
       layanan: (v.layanan || []).slice(0, 100).map(l => ({ nama: str(l.nama, 120), harga: Math.max(0, num(l.harga)) })).filter(l => l.nama),
       templatePengingat: str(v.templatePengingat, 1000),
+      rekeningInstansi: str(v.rekeningInstansi, 1000), penanggungJawab: str(v.penanggungJawab, 80), jabatan: str(v.jabatan, 60),
+      email: str(v.email, 120), npwp: str(v.npwp, 40),
     }, { merge: true }); // merge: kolom lain (mis. template ajakan form) tidak ikut terhapus
   });
 }

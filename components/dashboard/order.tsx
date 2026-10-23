@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { deleteOrder, saveOrder, setOrderStatus } from '@/app/actions';
 import { activeKar, layanan, STATUS_CLS } from '@/lib/derive';
 import { addDays, fmtD, monthKey, rp } from '@/lib/format';
-import { hitungTotal, ringkasItems, sisa } from '@/lib/order';
+import { hitungTotal, ringkasItems, sisa, telatBayar } from '@/lib/order';
 import { labelUnit } from '@/lib/servis';
 import { METODE, STATUS, type AllData, type Metode, type Order, type Pelanggan, type Status } from '@/lib/types';
 import { formObj, useDash } from './ctx';
@@ -21,7 +21,8 @@ export const mapsUrl = (alamat: string, maps?: string) =>
 /* status bayar: Lunas / Sebagian (sisa) / Belum dibayar; merah kalau lewat jatuh tempo */
 export function BayarPill({ o, today }: { o: Order; today: string }) {
   if (o.bayar === 'Lunas') return <span className="pill good">Lunas</span>;
-  const telat = o.status !== 'Batal' && o.jatuhTempo < today;
+  if (o.belumDitagih) return <span className="pill warn">Belum ditagih</span>;
+  const telat = telatBayar(o, today);
   const teks = o.bayar === 'Sebagian' ? `Sebagian · sisa ${rp(sisa(o))}` : 'Belum dibayar';
   return <span className={`pill ${telat ? 'bad' : o.bayar === 'Sebagian' ? 'accent' : 'warn'}`}>{teks}{telat ? ' · lewat tempo' : ''}</span>;
 }
@@ -193,7 +194,7 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
 
   return (
     <FormDialog
-      title={o ? `Ubah order · ${o.invoice}` : 'Order baru'}
+      title={o ? `Ubah order · ${o.invoice || o.pelanggan}` : 'Order baru'}
       onClose={onClose}
       onSubmit={form => {
         const f = formObj(form);
@@ -312,7 +313,9 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
         ) : (
           <div className="lbl">Pembayaran<div style={{ paddingTop: 6 }}><BayarPill o={o} today={d.today} /> <span className="hint">dicatat di tab Invoice</span></div></div>
         )}
-        <label className="lbl">Jatuh tempo bayar<input className="field" type="date" value={jatuhTempo} min={tanggal} onChange={e => setJatuhTempo(e.target.value)} /></label>
+        {(o ? o.belumDitagih : pel?.jenis === 'Instansi')
+          ? <div className="lbl">Penagihan<span className="hint" style={{ paddingTop: 6 }}>Instansi: invoice diterbitkan belakangan dari tab Invoice (nomor & jatuh tempo diisi saat itu).</span></div>
+          : <label className="lbl">Jatuh tempo bayar <span className="sm">(kosong = belum pasti)</span><input className="field" type="date" value={jatuhTempo} min={tanggal} onChange={e => setJatuhTempo(e.target.value)} /></label>}
         <label className="lbl span2">Catatan pekerjaan<textarea className="field" name="ket" defaultValue={o?.ket || ''} placeholder="mis. kapasitor outdoor diganti, freon tekanan normal" /></label>
       </div>
       {o?.catatanTeknisi && <fieldset className="box"><legend>Laporan teknisi</legend><p className="sm" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{o.catatanTeknisi}</p></fieldset>}

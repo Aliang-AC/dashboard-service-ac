@@ -172,7 +172,7 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
         const r = await savePelanggan(p?.id || null, {
           nama: f.nama, hp: f.hp, alamat: f.alamat, maps: f.maps, patokan: f.patokan, tipeLokasi: f.tipeLokasi, sumber: f.sumber,
           jenis, tempoHari: jenis === 'Instansi' ? +f.tempoHari || 0 : 0, intervalBulan: +f.intervalBulan || 3,
-          izinPengingat: !!f.izinPengingat, units: units.map(({ key, ...u }) => (void key, u)), gedung, catatan: f.catatan, versi,
+          izinPengingat: !!f.izinPengingat, rekening: (f.rekening || undefined) as Pelanggan['rekening'], units: units.map(({ key, ...u }) => (void key, u)), gedung, catatan: f.catatan, versi,
         });
         return run(Promise.resolve(r.ok ? { ok: true as const } : r), p ? 'Data konsumen diperbarui' : 'Konsumen ditambahkan');
       }}
@@ -192,9 +192,13 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
         <label className="lbl">Penagihan
           <select className="field" value={jenis} onChange={e => setJenis(e.target.value as Pelanggan['jenis'])}>{JENIS_PELANGGAN.map(j => <option key={j} value={j}>{j === 'Instansi' ? 'Instansi (tempo / rekap bulanan)' : 'Perorangan (bayar di tempat)'}</option>)}</select>
         </label>
-        {jenis === 'Instansi'
-          ? <label className="lbl">Tempo bayar (hari)<input className="field" type="number" name="tempoHari" min={0} max={365} defaultValue={p?.tempoHari ?? 30} /></label>
-          : <span />}
+        <label className="lbl">Rekening di invoice
+          <select className="field" name="rekening" defaultValue={p?.rekening || ''}>
+            <option value="">Otomatis ({jenis === 'Instansi' ? 'rekening CV' : 'rekening pribadi'})</option>
+            <option value="cv">Rekening atas nama CV</option>
+            <option value="pribadi">Rekening pribadi</option>
+          </select>
+        </label>
         <label className="lbl">Sumber konsumen<input className="field" name="sumber" list="sumberOpsi" defaultValue={p?.sumber || ''} placeholder="mis. Instagram, rekomendasi" /></label>
         <datalist id="sumberOpsi">{['Instagram', 'Facebook', 'TikTok', 'Google Maps', 'Rekomendasi teman', 'Pelanggan lama', 'Form online', 'Order'].map(s => <option key={s} value={s} />)}</datalist>
         <label className="lbl">Interval cuci bawaan (bulan)<input className="field" type="number" name="intervalBulan" min={1} max={24} defaultValue={intervalDef} /></label>

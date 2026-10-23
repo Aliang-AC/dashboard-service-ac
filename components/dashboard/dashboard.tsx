@@ -16,7 +16,7 @@ import { StikerUnitDialog } from './unit-admin';
 import { UnitLapanganDialog } from './unit-lapangan';
 import { BukaRollDialog, StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
-import { InvoiceView, BayarDialog } from './invoice';
+import { InvoiceView, BayarDialog, InfoInvoiceDialog, TerbitDialog } from './invoice';
 import { PelangganView, PelangganDialog } from './pelanggan';
 import { TugasDialog } from './tugas';
 import { RekapBaruDialog, BayarRekapDialog } from './rekap';
@@ -133,6 +133,8 @@ export function Dashboard() {
             {modal?.kind === 'stikerUnit' && <StikerUnitDialog key={modal.unitId} pelangganId={modal.pelangganId} unitId={modal.unitId} onClose={close} />}
             {modal?.kind === 'pelanggan' && <PelangganDialog key={modal.id || 'new'} id={modal.id} onClose={close} />}
             {modal?.kind === 'bayar' && <BayarDialog id={modal.id} onClose={close} />}
+            {modal?.kind === 'terbit' && <TerbitDialog id={modal.id} onClose={close} />}
+            {modal?.kind === 'infoInvoice' && <InfoInvoiceDialog key={modal.id} id={modal.id} onClose={close} />}
             {modal?.kind === 'tugas' && <TugasDialog key={modal.id} id={modal.id} onClose={close} />}
             {modal?.kind === 'unit' && <UnitLapanganDialog key={modal.orderId + (modal.unitId || 'baru')} orderId={modal.orderId} unitId={modal.unitId} onClose={close} />}
             {modal?.kind === 'rekapBaru' && <RekapBaruDialog onClose={close} />}
