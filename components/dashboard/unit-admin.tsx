@@ -156,7 +156,7 @@ export function UnitKartu({ u, setU, gedung, interval, info, owner, onHapus, onS
 }) {
   const gantiUnit = () => {
     if (!u.merk && !u.pk) return toast.error('Data AC lama kosong, tidak ada yang perlu dipindah ke riwayat.');
-    setU({ riwayat: [...(u.riwayat || []), { merk: u.merk || '', pk: u.pk || '', tipe: u.tipe || '', freon: u.freon || '', tahun: u.tahun || '', sampai: today, ket: 'Diganti unit baru', oleh: namaSaya }], merk: '', pk: '', freon: '', tahun: '', tipe: 'Split' });
+    setU({ riwayat: [...(u.riwayat || []), { merk: u.merk || '', pk: u.pk || '', tipe: u.tipe || '', freon: u.freon || '', tahun: u.tahun || '', sampai: today, ket: 'Diganti unit baru', oleh: namaSaya }], merk: '', pk: '', freon: '', tahun: '', tipe: 'Split', inverter: false, garansi: undefined });
     toast.info('Data AC lama dipindah ke riwayat. Isi data AC baru, lalu Simpan.');
   };
   return (
@@ -187,6 +187,7 @@ export function UnitKartu({ u, setU, gedung, interval, info, owner, onHapus, onS
         <input className="field" placeholder="Merk" value={u.merk || ''} onChange={e => setU({ merk: e.target.value })} list="merkOpsi" />
         <input className="field" placeholder="PK (mis. 1)" value={u.pk || ''} onChange={e => setU({ pk: e.target.value })} />
         <select className="field" value={u.tipe || 'Split'} onChange={e => setU({ tipe: e.target.value })} aria-label="Tipe AC">{TIPE_AC.map(t => <option key={t}>{t}</option>)}</select>
+        <select className="field" value={u.inverter ? 'Inverter' : 'Standard'} onChange={e => setU({ inverter: e.target.value === 'Inverter' })} aria-label="Standard atau inverter"><option>Standard</option><option>Inverter</option></select>
         <input className="field" placeholder="Freon (R32…)" value={u.freon || ''} onChange={e => setU({ freon: e.target.value })} list="freonOpsi" />
         <input className="field" placeholder="Tahun pasang" inputMode="numeric" value={u.tahun || ''} onChange={e => setU({ tahun: e.target.value })} />
       </div>
@@ -195,6 +196,10 @@ export function UnitKartu({ u, setU, gedung, interval, info, owner, onHapus, onS
         <label className="lbl">Interval cuci (bulan)<input className="field" type="number" min={1} max={24} value={u.intervalBulan || interval} onChange={e => setU({ intervalBulan: +e.target.value })} /></label>
       </div>
       <input className="field" placeholder="Catatan unit (mis. indoor Daikin, outdoor Panasonic)" value={u.catatan || ''} onChange={e => setU({ catatan: e.target.value })} />
+      <div className="grid2">
+        <label className="lbl">Garansi s/d <span className="sm">(kosong = tidak ada)</span><input className="field" type="date" value={u.garansi?.sampai || ''} onChange={e => setU({ garansi: e.target.value ? { sampai: e.target.value, ket: u.garansi?.ket || '' } : undefined })} /></label>
+        <label className="lbl">Keterangan garansi<input className="field" value={u.garansi?.ket || ''} disabled={!u.garansi?.sampai} placeholder="mis. 5 th sparepart + 10 th kompresor" onChange={e => setU({ garansi: { sampai: u.garansi?.sampai || '', ket: e.target.value } })} /></label>
+      </div>
       {(u.fotoIndoor || u.fotoOutdoor) && (
         <div className="actions sm">Foto name plate:
           {u.fotoIndoor && <a className="linkbtn" href={`/api/foto/${u.fotoIndoor}`} target="_blank" rel="noopener noreferrer">indoor</a>}

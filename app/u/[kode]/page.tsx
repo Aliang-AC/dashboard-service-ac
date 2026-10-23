@@ -75,7 +75,7 @@ async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
   const pesan = isiTemplateScan(setSnap.get('templateScan') || '', { ...u, kode });
   const orders = (await db.collection('orders').where('pelangganId', '==', p.id).get()).docs.map(d => normOrder({ id: d.id, ...d.data() }));
   const j = jadwalUnit(u, orders, p.intervalBulan);
-  const today = todayWIB();
+  const today = todayWIB(); // dipakai juga untuk status garansi
   const waktunya = !j.berikut || j.berikut <= today;
   const spec = specUnit(u);
 
@@ -87,6 +87,10 @@ async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
           <div style={{ fontWeight: 800, fontSize: '1.15rem', lineHeight: 1.3 }}>{u.label || 'Unit AC'}</div>
           {u.noAc && <span style={{ display: 'inline-block', marginTop: 4, background: '#eef3ff', color: '#123a9c', fontWeight: 700, fontSize: '.8rem', padding: '2px 8px', borderRadius: 6 }}>AC no. {u.noAc}</span>}
           {spec && <div className="muted" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--line)' }}>{spec}</div>}
+          {u.garansi?.sampai && !u.nonaktif && (
+            <div style={{ marginTop: 8 }}><span className={`pill ${u.garansi.sampai >= today ? 'good' : ''}`}>{u.garansi.sampai >= today ? `Garansi s/d ${fmtLong(u.garansi.sampai)}` : `Garansi berakhir ${fmtLong(u.garansi.sampai)}`}</span>
+              {u.garansi.ket && <div className="sm" style={{ marginTop: 4 }}>{u.garansi.ket}</div>}</div>
+          )}
           {u.nonaktif && <div className="pill" style={{ marginTop: 8 }}>Unit ini tercatat tidak aktif</div>}
         </div>
         {!u.nonaktif && (

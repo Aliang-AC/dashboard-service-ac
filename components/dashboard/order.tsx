@@ -3,11 +3,12 @@ import { totalStok } from '@/lib/stok';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { deleteOrder, saveOrder, setOrderStatus } from '@/app/actions';
-import { activeKar, layanan, STATUS_CLS } from '@/lib/derive';
+import { activeKar, STATUS_CLS } from '@/lib/derive';
 import { addDays, fmtD, monthKey, rp } from '@/lib/format';
 import { hitungTotal, ringkasItems, sisa, telatBayar } from '@/lib/order';
 import { labelUnit } from '@/lib/servis';
-import { METODE, STATUS, type AllData, type Metode, type Order, type Pelanggan, type Status } from '@/lib/types';
+import { METODE, STATUS, type AllData, type Metode, type Order, type PaketOrder, type Pelanggan, type Status, type UnitAC } from '@/lib/types';
+import { hargaOtomatis, namaPaket, totalPaket, type Tarif } from '@/lib/tarif';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { FotoGaleri } from './tugas';
@@ -109,7 +110,8 @@ function OrderTable() {
                 <tr key={o.id}>
                   <td className="num">{fmtD(o.tanggal)}<div className="sm">{o.jam}</div></td>
                   <td><b>{o.pelanggan}</b><div className="sm">{o.alamat}{o.hp ? ' · ' + o.hp : ''}</div></td>
-                  <td>{ringkasItems(o.items)}<div className="sm">{o.items.map(i => i.unit).filter(Boolean).join(', ')}</div></td>
+                  <td>{ringkasItems(o.items)}<div className="sm">{o.items.map(i => i.unit).filter(Boolean).join(', ')}</div>
+                    {o.items.some(i => i.perluHarga) && <span className="pill warn">harga belum diisi</span>}</td>
                   <td>{namaTeknisi(d, o.teknisi)}</td>
                   <td className="r num">{rp(o.total)}</td>
                   <td>
@@ -135,17 +137,35 @@ function OrderTable() {
   );
 }
 
-type ItemRow = { key: number; layanan: string; unit: string; qty: string; harga: string; unitId?: string };
+/* pilihan = 'L:<id layanan>' | 'P:<id paket>' | 'X:<nama lama>' (layanan yang sudah tidak ada di daftar harga) */
+type ItemRow = { key: number; pilihan: string; layanan: string; unit: string; qty: string; harga: string; unitId?: string; info?: string; perluHarga?: boolean };
+
+/* isi nama layanan & harga otomatis untuk satu baris dari daftar harga + unit AC yang dipilih */
+function hitungBaris(t: Tarif, pilihan: string, u: UnitAC | undefined): Pick<ItemRow, 'layanan' | 'harga' | 'info' | 'perluHarga'> {
+  const [jenis, id] = [pilihan.slice(0, 1), pilihan.slice(2)];
+  if (jenis === 'P') {
+    const pk = t.paket.find(x => x.id === id);
+    if (!pk) return { layanan: '', harga: '', info: '', perluHarga: false };
+    return { layanan: `${namaPaket(pk)} ${pk.tipe}`, harga: String(totalPaket(pk)), info: `paket: unit ${rp(pk.hargaUnit)} + alat ${rp(pk.hargaAlat)} + jasa ${rp(pk.jasa)}`, perluHarga: false };
+  }
+  if (jenis === 'L') {
+    const l = t.layanan.find(x => x.id === id);
+    const h = hargaOtomatis(l, u);
+    return { layanan: l?.nama || '', harga: h.harga == null ? '' : String(h.harga), info: h.info, perluHarga: h.harga == null };
+  }
+  return { layanan: id, harga: '', info: '', perluHarga: false };
+}
 type PartRow = { key: number; itemId: string; qty: string; harga: string };
 let rowKey = 0;
 
 export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string; onClose: () => void; pelangganId?: string; unitIds?: string[] }) {
   const { d, run } = useDash();
   const o: Order | undefined = id ? d.orders.find(x => x.id === id) : undefined;
-  const lay = layanan(d);
+  const t = d.tarif;
   const kar = activeKar(d);
   const stok = d.stok.slice().sort((a, b) => a.nama.localeCompare(b.nama));
-  const tarif = (nama: string) => +(lay.find(l => l.nama === nama)?.harga || 0);
+  const paketAktif = t.paket.filter(x => !x.nonaktif);
+  const layDefault = t.layanan.find(x => /bersih|cuci/i.test(x.nama) && x.jenis === 'pk') || t.layanan[0];
 
   /* pelanggan */
   const awal = d.pelanggan.find(p => p.id === (o?.pelangganId || pelangganId));
@@ -171,26 +191,45 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
   const setTanggalTempo = (p: Pelanggan | null, tgl = tanggal) => setJatuhTempo(tempoDari(p, tgl));
 
   /* pekerjaan, teknisi, sparepart */
-  const [items, setItems] = useState<ItemRow[]>(o?.items.length
-    ? o.items.map(i => ({ key: ++rowKey, layanan: i.layanan, unit: i.unit, qty: String(i.qty), harga: String(i.harga), unitId: i.unitId || '' }))
+  /* baris baru untuk satu unit: layanan bawaan "Bersihkan AC", harga otomatis */
+  const barisUnit = (u?: UnitAC): ItemRow => {
+    const pilihan = layDefault ? 'L:' + layDefault.id : '';
+    return { key: ++rowKey, pilihan, unit: u ? labelUnit(u) : '', qty: '1', unitId: u?.id || '', ...hitungBaris(t, pilihan, u) };
+  };
+  const [items, setItems] = useState<ItemRow[]>(() => o?.items.length
+    ? o.items.map(i => {
+        const l = t.layanan.find(x => x.nama === i.layanan);
+        const pilihan = i.paket ? 'P:' + i.paket.id : l ? 'L:' + l.id : 'X:' + i.layanan;
+        return { key: ++rowKey, pilihan, layanan: i.layanan, unit: i.unit, qty: String(i.qty), harga: i.perluHarga ? '' : String(i.harga), unitId: i.unitId || '', perluHarga: i.perluHarga, info: i.paket ? 'paket (harga saat order dibuat)' : '' };
+      })
     : unitIds?.length && awal
-      /* order untuk sekumpulan unit (mis. satu gedung): satu baris per unit, layanan bawaan "Cuci AC" */
-      ? (awal.units || []).filter(u => unitIds.includes(u.id)).map(u => {
-          const l = lay.find(x => /cuci/i.test(x.nama))?.nama || lay[0]?.nama || '';
-          return { key: ++rowKey, layanan: l, unit: labelUnit(u), qty: '1', harga: String(tarif(l) || ''), unitId: u.id };
-        })
-      : [{ key: ++rowKey, layanan: lay[0]?.nama || '', unit: '', qty: '1', harga: String(tarif(lay[0]?.nama || '') || '') }]);
+      ? (awal.units || []).filter(u => unitIds.includes(u.id)).map(barisUnit)
+      : [barisUnit()]);
   const setItem = (key: number, patch: Partial<ItemRow>) => setItems(xs => xs.map(x => (x.key === key ? { ...x, ...patch } : x)));
+  const unitPel = (id?: string) => pel?.units?.find(u => u.id === id);
+  /* layanan atau unit diganti → hitung ulang harga otomatis (harga yang diketik manual tidak ditimpa kecuali pilihan berubah) */
+  const gantiPilihan = (row: ItemRow, pilihan: string) => setItem(row.key, { pilihan, ...hitungBaris(t, pilihan, unitPel(row.unitId)), ...(pilihan.startsWith('P:') && row.unitId && row.unitId !== '__baru' ? { unitId: '__baru', unit: '' } : {}) });
+  const gantiUnit = (row: ItemRow, unitId: string) => {
+    const u = unitPel(unitId);
+    if (unitId === '__baru') return setItem(row.key, { unitId: '__baru', unit: '' });
+    setItem(row.key, { unitId, unit: u ? labelUnit(u) : '', ...(row.pilihan.startsWith('L:') ? hitungBaris(t, row.pilihan, u) : {}) });
+  };
   const [teknisi, setTeknisi] = useState<string[]>(o?.teknisi || []);
   const [parts, setParts] = useState<PartRow[]>((o?.parts || []).map(p => ({ key: ++rowKey, itemId: p.itemId, qty: String(p.qty), harga: String(p.harga) })));
   const setPart = (key: number, patch: Partial<PartRow>) => setParts(ps => ps.map(p => (p.key === key ? { ...p, ...patch } : p)));
   const [diskon, setDiskon] = useState(o?.diskon ? String(o.diskon) : '');
   const [bayarAwal, setBayarAwal] = useState<'' | Metode>('');
 
-  const itemsNum = items.map(i => ({ layanan: i.layanan, unit: i.unit, qty: +i.qty || 1, harga: +i.harga || 0, unitId: i.unitId === '__baru' ? '' : i.unitId || '' }));
+  const itemsNum = items.filter(i => i.layanan).map(i => ({
+    layanan: i.layanan, unit: i.unit, qty: +i.qty || 1, harga: +i.harga || 0, unitId: i.unitId === '__baru' ? '' : i.unitId || '',
+    ...(i.pilihan.startsWith('P:') ? { paket: { id: i.pilihan.slice(2) } as PaketOrder } : {}),
+    ...(!i.harga && i.perluHarga ? { perluHarga: true } : {}),
+  }));
+  const nKosong = items.filter(i => i.layanan && !i.harga && i.perluHarga).length;
   const partsNum = parts.filter(p => p.itemId).map(p => ({ itemId: p.itemId, qty: +p.qty || 0, harga: +p.harga || 0, nama: '', satuan: '' }));
   const total = hitungTotal(itemsNum, partsNum, +diskon || 0);
   const unitOpsi = pel?.units?.map(u => labelUnit(u)) || [];
+  const unitAktif = (pel?.units || []).filter(u => !u.nonaktif);
 
   return (
     <FormDialog
@@ -254,27 +293,37 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
         <legend>Pekerjaan</legend>
         <datalist id="unitOpsi">{unitOpsi.map(u => <option key={u} value={u} />)}</datalist>
         {items.map(i => (
-          <div key={i.key} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1.4fr) 60px minmax(0,1fr) 34px', gap: 6, alignItems: 'center' }}>
-            <select className="field" aria-label="Layanan" value={i.layanan}
-              onChange={e => setItem(i.key, { layanan: e.target.value, harga: String(tarif(e.target.value) || i.harga) })}>
-              {lay.map(l => <option key={l.nama}>{l.nama}</option>)}
-              {i.layanan && !lay.some(l => l.nama === i.layanan) && <option>{i.layanan}</option>}
-            </select>
-            {pel?.units?.length && i.unitId !== '__baru'
-              ? <select className="field" aria-label="Unit AC" value={i.unitId && pel.units.some(u => u.id === i.unitId) ? i.unitId : ''}
-                  onChange={e => { const u = pel.units.find(x => x.id === e.target.value); setItem(i.key, e.target.value === '__baru' ? { unitId: '__baru', unit: '' } : { unitId: e.target.value, unit: u ? labelUnit(u) : '' }); }}>
-                  <option value="">— pilih unit —</option>
-                  {pel.units.map(u => <option key={u.id} value={u.id}>{labelUnit(u)}{u.kode ? ` (${u.kode})` : ''}</option>)}
-                  <option value="__baru">+ Unit lain (ketik)…</option>
-                </select>
-              : <input className="field" list="unitOpsi" aria-label="Unit AC" value={i.unit} placeholder="Unit, mis. Kamar depan – Daikin 1 PK" onChange={e => setItem(i.key, { unit: e.target.value, unitId: i.unitId === '__baru' ? '__baru' : '' })} />}
-            <input className="field" type="number" min={1} aria-label="Jumlah unit" value={i.qty} onChange={e => setItem(i.key, { qty: e.target.value })} />
-            <input className="field" type="number" min={0} step={1000} aria-label="Harga per unit" value={i.harga} placeholder="Harga" onChange={e => setItem(i.key, { harga: e.target.value })} />
-            <Button type="button" variant="outline" size="icon" aria-label="Hapus baris" disabled={items.length <= 1} onClick={() => setItems(xs => xs.filter(x => x.key !== i.key))}>×</Button>
+          <div key={i.key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1.4fr) 60px minmax(0,1fr) 34px', gap: 6, alignItems: 'center' }}>
+              <select className="field" aria-label="Layanan" value={i.pilihan} onChange={e => gantiPilihan(i, e.target.value)}>
+                {!i.pilihan && <option value="">Pilih layanan…</option>}
+                <optgroup label="Layanan">{t.layanan.map(l => <option key={l.id} value={'L:' + l.id}>{l.nama}</option>)}</optgroup>
+                {paketAktif.length > 0 && <optgroup label="Paket AC baru">{paketAktif.map(x => <option key={x.id} value={'P:' + x.id}>{namaPaket(x)} {x.tipe} · {rp(totalPaket(x))}</option>)}</optgroup>}
+                {i.pilihan.startsWith('X:') && <option value={i.pilihan}>{i.layanan}</option>}
+              </select>
+              {pel?.units?.length && i.unitId !== '__baru'
+                ? <select className="field" aria-label="Unit AC" value={i.unitId && unitPel(i.unitId) ? i.unitId : ''} onChange={e => gantiUnit(i, e.target.value)}>
+                    <option value="">— pilih unit —</option>
+                    {pel.units.map(u => <option key={u.id} value={u.id}>{labelUnit(u)}{u.inverter ? ' · inverter' : ''}{u.kode ? ` (${u.kode})` : ''}</option>)}
+                    <option value="__baru">+ Unit lain / baru (ketik)…</option>
+                  </select>
+                : <input className="field" list="unitOpsi" aria-label="Unit AC" value={i.unit} placeholder={i.pilihan.startsWith('P:') ? 'Ruangan AC baru, mis. Ruang tamu' : 'Unit, mis. Kamar depan – Daikin 1 PK'} onChange={e => setItem(i.key, { unit: e.target.value, unitId: i.unitId === '__baru' ? '__baru' : '' })} />}
+              <input className="field" type="number" min={1} aria-label="Jumlah unit" value={i.qty} onChange={e => setItem(i.key, { qty: e.target.value })} />
+              <input className="field" type="number" min={0} step={1000} aria-label="Harga per unit" value={i.harga} placeholder="Isi harga"
+                style={!i.harga && i.perluHarga ? { borderColor: 'var(--warn)', background: 'var(--warn-soft)' } : undefined}
+                onChange={e => setItem(i.key, { harga: e.target.value, info: '' })} />
+              <Button type="button" variant="outline" size="icon" aria-label="Hapus baris" disabled={items.length <= 1} onClick={() => setItems(xs => xs.filter(x => x.key !== i.key))}>×</Button>
+            </div>
+            {!i.harga && i.perluHarga
+              ? <span className="sm" style={{ color: 'var(--warn)', fontWeight: 600 }}>⚠ {i.info || 'Harga diisi manual'} — isi harga setelah dikonfirmasi</span>
+              : i.info ? <span className="sm" style={{ color: 'var(--good)' }}>✓ otomatis: {i.info}</span> : null}
           </div>
         ))}
-        <div><Button type="button" size="sm" variant="outline" onClick={() => setItems(xs => [...xs, { key: ++rowKey, layanan: lay[0]?.nama || '', unit: '', qty: '1', harga: String(tarif(lay[0]?.nama || '') || '') }])}>+ Tambah pekerjaan</Button></div>
-        <p className="hint">Kolom: layanan · unit AC (lokasi/merk/PK) · jumlah · harga per unit. Unit yang diketik otomatis tersimpan di data pelanggan.</p>
+        <div className="actions">
+          <Button type="button" size="sm" variant="outline" onClick={() => setItems(xs => [...xs, barisUnit()])}>+ Tambah pekerjaan</Button>
+          {unitAktif.length > 1 && <Button type="button" size="sm" variant="outline" onClick={() => setItems(xs => [...xs.filter(x => x.unit || x.unitId), ...unitAktif.filter(u => !xs.some(x => x.unitId === u.id)).map(barisUnit)])}>+ Semua unit pelanggan ini</Button>}
+        </div>
+        <p className="hint">Pilih layanan & unit AC → harga terisi otomatis dari PK dan tipe (standard / inverter) unit itu, dan tetap bisa diubah. Harga kosong bertanda oranye = diisi manual. Paket AC baru: ketik nama ruangan, unit AC-nya otomatis tercatat di data pelanggan.</p>
       </fieldset>
 
       <fieldset className="box">
@@ -299,7 +348,7 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
       </fieldset>
 
       <div className="grid2">
-        <label className="lbl">Diskon (Rp)<input className="field" type="number" min={0} step={1000} value={diskon} onChange={e => setDiskon(e.target.value)} /></label>
+        <label className="lbl">Potongan harga (Rp)<input className="field" type="number" min={0} step={1000} value={diskon} onChange={e => setDiskon(e.target.value)} /></label>
         <label className="lbl">Status pekerjaan
           <select className="field" name="status" defaultValue={o?.status || 'Terjadwal'}>{STATUS.map(s => <option key={s}>{s}</option>)}</select>
         </label>
@@ -320,7 +369,7 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
       </div>
       {o?.catatanTeknisi && <fieldset className="box"><legend>Laporan teknisi</legend><p className="sm" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{o.catatanTeknisi}</p></fieldset>}
       {o && <FotoGaleri o={o} bisaTambah />}
-      <div className="total-line"><span>Total</span><strong>{rp(total)}</strong></div>
+      <div className="total-line"><span>Total</span><strong>{rp(total)}{nKosong > 0 && <span className="pill warn" style={{ marginLeft: 8 }}>+ {nKosong} harga belum diisi</span>}</strong></div>
     </FormDialog>
   );
 }

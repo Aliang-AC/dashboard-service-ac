@@ -1,7 +1,11 @@
+import type { Tarif } from './tarif';
 export type Part = { itemId: string; nama: string; satuan: string; qty: number; harga: number };
 
 /* satu baris pekerjaan di order, mis. "Cuci AC 1/2–1 PK" · "Daikin – Kamar depan" × 2 @ 75.000 */
-export type OrderItem = { layanan: string; unit: string; qty: number; harga: number; unitId?: string };
+/* paket AC baru yang dipakai di baris order (salinan saat order dibuat; harga tarif berubah tidak mengubah order lama) */
+export type PaketOrder = { id: string; merk: string; pk: string; tipe: string; watt?: number; hargaUnit: number; hargaAlat: number; jasa: number; stok: { itemId: string; qty: number }[]; garansiBulan?: number; garansi?: string };
+/* perluHarga = harga belum bisa ditentukan otomatis (PK belum dikonfirmasi, >2 PK, layanan "saat pengecekan") — admin mengisi manual */
+export type OrderItem = { layanan: string; unit: string; qty: number; harga: number; unitId?: string; paket?: PaketOrder; perluHarga?: boolean };
 export const METODE = ['Tunai', 'Transfer', 'QRIS'] as const;
 export type Metode = (typeof METODE)[number];
 export type Pembayaran = { id: string; tanggal: string; jumlah: number; metode: Metode; ket: string; oleh: string; at: number };
@@ -56,6 +60,8 @@ export type UnitAC = {
   id: string; kode?: string; label: string;
   gedung?: string; noAc?: string;
   merk?: string; pk?: string; tipe?: string; freon?: string; tahun?: string;
+  inverter?: boolean;                       // AC tipe inverter / smart inverter (harga layanan berbeda)
+  garansi?: { sampai: string; ket: string }; // mis. AC baru dari paket: garansi s/d tanggal
   servisTerakhir?: string; perkiraan?: boolean; intervalBulan?: number;
   catatan?: string; fotoIndoor?: string; fotoOutdoor?: string;
   nonaktif?: boolean; riwayat?: RiwayatUnit[];
@@ -137,6 +143,7 @@ export type Me = { uid: string; nama: string; login: string; peran: Peran; karya
 export type AllData = {
   me: Me;
   orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[]; pelanggan: Pelanggan[]; rekap: Rekap[]; fotoAktif: boolean;
+  tarif: Tarif; // daftar harga (karyawan: hanya nama layanan, tanpa harga & paket)
   absensi: Absensi[]; catatan: Catatan[]; settings: Settings; lokasi: Lokasi | null;
   today: string;
   /* hanya diisi untuk pemilik */

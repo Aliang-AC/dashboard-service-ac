@@ -2,7 +2,7 @@
 import { createContext, useContext } from 'react';
 import type { AllData, Result } from '@/lib/types';
 
-export type Tab = 'ringkasan' | 'order' | 'pelanggan' | 'stok' | 'absensi' | 'invoice' | 'catatan' | 'pengaturan';
+export type Tab = 'ringkasan' | 'order' | 'pelanggan' | 'harga' | 'stok' | 'absensi' | 'invoice' | 'catatan' | 'pengaturan';
 
 export type Modal =
   | { kind: 'order'; id?: string; pelangganId?: string; unitIds?: string[] }
@@ -15,6 +15,7 @@ export type Modal =
   | { kind: 'unit'; orderId: string; unitId?: string }
   | { kind: 'rekapBaru' }
   | { kind: 'bagikanForm' }
+  | { kind: 'kirimHarga' }
   | { kind: 'bayarRekap'; id: string }
   | { kind: 'stok'; id?: string }
   | { kind: 'stok-in'; id: string; adj: boolean }

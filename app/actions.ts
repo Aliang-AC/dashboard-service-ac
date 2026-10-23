@@ -14,9 +14,10 @@ import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '
 import { labelUnit, tambahBulan } from '@/lib/servis';
 import { pakaiRoll } from '@/lib/stok';
 import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, specUnit } from '@/lib/unit';
+import { hargaOtomatis, JENIS_HARGA, TARIF_KOSONG, type PaketAC, type Tarif, type TarifLayanan } from '@/lib/tarif';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
-  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, MODEL_INVOICE, type AllData, type Order, type OrderInput, type OrderItem, type Part, type Result, type ResultOf, type Me, type Peran,
+  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, MODEL_INVOICE, type AllData, type Order, type OrderInput, type OrderItem, type PaketOrder, type Part, type Result, type ResultOf, type Me, type Peran,
   type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO, type Rekap,
   type Pengingat, HASIL_PENGINGAT, TIPE_LOKASI, type RiwayatUnit, type Stiker, type StatusStiker,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
@@ -58,7 +59,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     const db = adminDb();
     const docs = <T,>(s: FirebaseFirestore.QuerySnapshot) => s.docs.map(d => ({ id: d.id, ...d.data() }) as T);
     const staff = atLeast(me.peran, 'admin');
-    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, lokasi, backup, pelanggan, adaFoto] = await Promise.all([
+    const [orders, stok, mutasi, karyawan, absensi, catatan, settings, tarifSnap, lokasi, backup, pelanggan, adaFoto] = await Promise.all([
       db.collection('orders').orderBy('createdAt', 'desc').limit(1000).get(),
       db.collection('stok').get(),
       staff ? db.collection('mutasi').orderBy('createdAt', 'desc').limit(50).get() : null,
@@ -66,6 +67,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       db.collection('absensi').orderBy('tanggal', 'desc').limit(70).get(),
       db.collection('catatan').orderBy('createdAt', 'desc').limit(1000).get(),
       db.doc('settings/usaha').get(),
+      db.doc('settings/tarif').get(),
       getLokasi(),
       me.peran === 'owner' ? db.doc('settings/backup').get() : null,
       db.collection('pelanggan').get(),
@@ -77,6 +79,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
     let a = docs<Absensi>(absensi), c = docs<Catatan>(catatan), pl = docs<Pelanggan>(pelanggan);
     let st = (settings.data() as Settings) || {};
+    let tarif = bacaTarif(tarifSnap.data());
     const lok: Lokasi | null = staff ? lokasi : null;
 
     if (me.peran !== 'owner') s = s.map(x => ({ ...x, hargaBeli: null })); // harga modal hanya untuk pemilik
@@ -95,12 +98,14 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       pl = pl.filter(x => pids.has(x.id)).map(x => ({ ...x, tempoHari: 0, catatan: '', pengingat: undefined }));
       /* untuk laporan teknisi: nama layanan & barang stok saja, tanpa harga */
       s = s.map(x => ({ ...x, hargaBeli: null, hargaJual: 0 }));
-      st = { nama: st.nama, jamMasuk: st.jamMasuk, jamMasukMinggu: st.jamMasukMinggu, layanan: (st.layanan || []).map(l => ({ nama: l.nama, harga: 0 })) };
+      /* teknisi: hanya nama layanan (tanpa harga & paket) untuk "tambah pekerjaan di lokasi" */
+      tarif = { layanan: tarif.layanan.map(l => ({ id: l.id, nama: l.nama, jenis: l.jenis })), paket: [], infoPaket: {} };
+      st = { nama: st.nama, jamMasuk: st.jamMasuk, jamMasukMinggu: st.jamMasukMinggu, layanan: tarif.layanan.map(l => ({ nama: l.nama, harga: 0 })) };
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
       pelanggan: pl, rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto,
-      settings: st, lokasi: lok, today: todayWIB(),
+      settings: st, tarif, lokasi: lok, today: todayWIB(),
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
       arsipUrl: arsipId ? `https://docs.google.com/spreadsheets/d/${arsipId}/edit` : null,
@@ -114,7 +119,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
 /* Selisih pemakaian sparepart order lama vs baru → update stok (atomik) + jejak di mutasi.
    Order Batal dianggap tidak memakai sparepart. */
 function applyStock(tx: Transaction, stokSnaps: Map<string, DocumentSnapshot>, oldO: Order | null, newO: Order | null) {
-  const partsOf = (o: Order | null) => (!o || o.status === 'Batal' ? [] : o.parts || []);
+  const partsOf = (o: Order | null) => (!o || o.status === 'Batal' ? [] : pemakaianStok(o));
   const delta: Record<string, number> = {};
   partsOf(oldO).forEach(p => (delta[p.itemId] = (delta[p.itemId] || 0) - p.qty));
   partsOf(newO).forEach(p => (delta[p.itemId] = (delta[p.itemId] || 0) + p.qty));
@@ -141,6 +146,15 @@ function applyStock(tx: Transaction, stokSnaps: Map<string, DocumentSnapshot>, o
   }
 }
 
+/* barang stok yang dipakai order: sparepart + isi paket AC baru (unit AC & alat) */
+function pemakaianStok(o: Pick<Order, 'parts' | 'items'>) {
+  return [
+    ...(o.parts || []),
+    ...(o.items || []).flatMap(i => (i.paket?.stok || []).map(x => ({ itemId: x.itemId, qty: r3(x.qty * (i.qty || 1)) }))),
+  ];
+}
+const idStok = (o: Pick<Order, 'parts' | 'items'> | null) => (o ? pemakaianStok(o).map(p => p.itemId) : []);
+
 async function readStok(tx: Transaction, ids: string[]) {
   const uniq = [...new Set(ids.filter(Boolean))];
   const db = adminDb();
@@ -148,9 +162,27 @@ async function readStok(tx: Transaction, ids: string[]) {
   return new Map(snaps.map(s => [s.id, s]));
 }
 
-const cleanItems = (items: OrderItem[]) => (items || []).slice(0, 40)
-  .map(i => ({ layanan: str(i.layanan, 120), unit: str(i.unit, 120), qty: Math.max(1, Math.round(num(i.qty)) || 1), harga: Math.max(0, num(i.harga)), unitId: str(i.unitId, 20) }))
+const cleanItems = (items: OrderItem[]) => (items || []).slice(0, 60)
+  .map(i => {
+    const harga = Math.max(0, num(i.harga));
+    return { layanan: str(i.layanan, 120), unit: str(i.unit, 160), qty: Math.max(1, Math.round(num(i.qty)) || 1), harga, unitId: str(i.unitId, 20), paketId: str(i.paket?.id, 40), perluHarga: !!i.perluHarga && harga <= 0 };
+  })
   .filter(i => i.layanan);
+/* paket di baris order: salinan dari daftar harga saat order dibuat; baris order lama dengan paket yang sama memakai salinan lamanya */
+function pasangPaket(items: ReturnType<typeof cleanItems>, tarif: Tarif, lama: OrderItem[]): OrderItem[] {
+  const lamaById = new Map(lama.filter(i => i.paket).map(i => [i.paket!.id, i.paket!]));
+  return items.map(({ paketId, perluHarga, ...i }) => {
+    const out: OrderItem = { ...i, ...(perluHarga ? { perluHarga } : {}) };
+    if (!paketId) return out;
+    const snap = lamaById.get(paketId) || paketOrder(tarif.paket.find(p => p.id === paketId), tarif);
+    if (!snap) throw new UserError(`Paket pada baris "${i.layanan}" tidak ditemukan di daftar harga.`);
+    return { ...out, paket: snap };
+  });
+}
+const paketOrder = (p: PaketAC | undefined, t: Tarif): PaketOrder | undefined => p && {
+  id: p.id, merk: p.merk, pk: p.pk, tipe: p.tipe, watt: p.watt || 0, hargaUnit: p.hargaUnit, hargaAlat: p.hargaAlat, jasa: p.jasa,
+  stok: (p.stok || []).filter(x => x.itemId && x.qty > 0), garansiBulan: t.infoPaket.garansiBulan || 0, garansi: t.infoPaket.garansi || '',
+};
 const idAcak = () => Math.random().toString(36).slice(2, 10);
 
 /* Nomor stiker QR: GT-0001, GT-0002, … (counters/unit). Kode hanya diberikan saat stiker dicetak/dipasang. */
@@ -158,17 +190,25 @@ const COUNTER_UNIT = () => adminDb().doc('counters/unit');
 const kodesDari = (units: UnitAC[]) => units.map(u => u.kode!).filter(Boolean);
 
 /* Unit dari baris order: pakai unitId yang dipilih, atau cocokkan label, atau buat unit baru. */
-function sambungUnit(lama: UnitAC[], items: OrderItem[], intervalDefault: number) {
+function sambungUnit(lama: UnitAC[], items: OrderItem[], intervalDefault: number, tanggal: string) {
   const units = [...lama];
   const hasil = items.map(i => {
     if (i.unitId && units.some(u => u.id === i.unitId)) return i;
     const label = i.unit.trim();
     if (!label) return { ...i, unitId: '' };
     let u = units.find(x => labelUnitLama(x).toLowerCase() === label.toLowerCase() || x.label.toLowerCase() === label.toLowerCase());
-    if (!u) { u = { id: idAcak(), label, intervalBulan: intervalDefault || 3 }; units.push(u); }
+    if (!u) {
+      u = { id: idAcak(), label, intervalBulan: intervalDefault || 3 };
+      /* AC baru dari paket: merk, PK, tipe & garansi langsung tercatat */
+      if (i.paket) Object.assign(u, {
+        merk: i.paket.merk, pk: i.paket.pk, tipe: 'Split', inverter: i.paket.tipe === 'Inverter', tahun: tanggal.slice(0, 4), servisTerakhir: tanggal,
+        ...(i.paket.garansiBulan ? { garansi: { sampai: tambahBulan(tanggal, i.paket.garansiBulan), ket: i.paket.garansi || '' } } : {}),
+      });
+      units.push(u);
+    }
     return { ...i, unitId: u.id };
   });
-  return { items: hasil, units: units.slice(0, 60) };
+  return { items: hasil, units: units.slice(0, 300) };
 }
 const labelUnitLama = (u: UnitAC) => labelUnit(u);
 
@@ -181,8 +221,9 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
     const status = STATUS.includes(input.status) ? input.status : 'Terjadwal';
     const jam = str(input.jam, 5);
     if (!isTime(jam)) throw new UserError('Jam tidak valid.');
-    const items = cleanItems(input.items);
-    if (!items.length) throw new UserError('Isi minimal satu pekerjaan.');
+    const itemsIn = cleanItems(input.items);
+    if (!itemsIn.length) throw new UserError('Isi minimal satu pekerjaan.');
+    const tarif = itemsIn.some(i => i.paketId) ? bacaTarif((await adminDb().doc('settings/tarif').get()).data()) : TARIF_KOSONG;
     const teknisi = [...new Set((input.teknisi || []).map(t => str(t, 64)).filter(Boolean))].slice(0, 5);
     const hp = str(input.hp, 30), alamat = str(input.alamat, 300);
     const rawParts = (input.parts || []).slice(0, 50)
@@ -196,7 +237,8 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
       const oldSnap = id ? await tx.get(ref) : null;
       if (id && !oldSnap?.exists) throw new UserError('Order tidak ditemukan (mungkin sudah dihapus).');
       const old = oldSnap ? normOrder({ id: oldSnap.id, ...oldSnap.data() }) : null;
-      const stokSnaps = await readStok(tx, [...rawParts.map(p => p.itemId), ...(old?.parts || []).map(p => p.itemId)]);
+      const items = pasangPaket(itemsIn, tarif, old?.items || []);
+      const stokSnaps = await readStok(tx, [...rawParts.map(p => p.itemId), ...items.flatMap(i => (i.paket?.stok || []).map(x => x.itemId)), ...idStok(old)]);
       const counterRef = db.doc(`counters/inv-${tanggal.slice(0, 7)}`);
       const counter = old ? null : await tx.get(counterRef);
       /* pelanggan: pakai yang dipilih, atau cari dari nomor HP, atau buat baru */
@@ -231,7 +273,7 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
       /* ---- tulis ---- */
       const pelRef = pRef && pSnap?.exists ? pRef : db.collection('pelanggan').doc();
       /* baris order tersambung ke unit AC konsumen (unit baru dibuat tanpa stiker; stiker dipasang teknisi) */
-      const sambung = sambungUnit(pel?.units || [], items, pel?.intervalBulan || 3);
+      const sambung = sambungUnit(pel?.units || [], items, pel?.intervalBulan || 3, tanggal);
       const unitKodes = kodesDari(sambung.units);
       const unitBerubah = sambung.units.length !== (pel?.units || []).length;
       if (pel) {
@@ -263,7 +305,7 @@ export async function deleteOrder(id: string): Promise<Result> {
       const s = await tx.get(ref);
       if (!s.exists) return;
       const old = normOrder({ id: s.id, ...s.data() });
-      const stokSnaps = await readStok(tx, (old.parts || []).map(p => p.itemId));
+      const stokSnaps = await readStok(tx, idStok(old));
       tx.delete(ref);
       applyStock(tx, stokSnaps, old, null);
     });
@@ -279,7 +321,7 @@ export async function setOrderStatus(id: string, status: Order['status']): Promi
       const s = await tx.get(ref);
       if (!s.exists) throw new UserError('Order tidak ditemukan.');
       const old = normOrder({ id: s.id, ...s.data() });
-      const stokSnaps = await readStok(tx, (old.parts || []).map(p => p.itemId));
+      const stokSnaps = await readStok(tx, idStok(old));
       tx.update(ref, { status, updatedAt: Date.now() });
       applyStock(tx, stokSnaps, old, { ...old, status });
     });
@@ -317,6 +359,32 @@ export async function tambahPembayaran(id: string, v: { tanggal: string; jumlah:
 /* hapus catatan pembayaran (salah input) — khusus pemilik */
 export async function hapusPembayaran(id: string, pid: string): Promise<Result> {
   return run('owner', async () => { await ubahPembayaran(id, p => p.filter(x => x.id !== pid)); });
+}
+
+/* ---------------- daftar harga (layanan & paket AC baru) — pemilik & admin ---------------- */
+const nonNeg = (v: unknown) => Math.max(0, Math.round(num(v)));
+function bacaTarif(raw: unknown): Tarif {
+  const t = (raw || {}) as Partial<Tarif>;
+  const jenis = (j: unknown) => (j as string) in JENIS_HARGA ? (j as TarifLayanan['jenis']) : 'manual';
+  return {
+    layanan: (Array.isArray(t.layanan) ? t.layanan : []).slice(0, 100).map(l => ({
+      id: str(l?.id, 40) || idAcak(), nama: str(l?.nama, 120), jenis: jenis(l?.jenis),
+      harga1: nonNeg(l?.harga1), harga2: nonNeg(l?.harga2), inverter: nonNeg(l?.inverter), harga: nonNeg(l?.harga), ket: str(l?.ket, 1000),
+    })).filter(l => l.nama),
+    paket: (Array.isArray(t.paket) ? t.paket : []).slice(0, 200).map(p => ({
+      id: str(p?.id, 40) || idAcak(), merk: str(p?.merk, 40), pk: str(p?.pk, 10), tipe: p?.tipe === 'Inverter' ? 'Inverter' as const : 'Standard' as const,
+      watt: nonNeg(p?.watt), hargaUnit: nonNeg(p?.hargaUnit), hargaAlat: nonNeg(p?.hargaAlat), jasa: nonNeg(p?.jasa),
+      stok: (Array.isArray(p?.stok) ? p.stok : []).slice(0, 20).map(x => ({ itemId: str(x?.itemId, 64), qty: r3(Math.max(0, num(x?.qty))) })).filter(x => x.itemId && x.qty > 0),
+      nonaktif: !!p?.nonaktif,
+    })).filter(p => p.merk),
+    infoPaket: { garansi: str(t.infoPaket?.garansi, 300), garansiBulan: Math.min(240, nonNeg(t.infoPaket?.garansiBulan)), alatStandar: str(t.infoPaket?.alatStandar, 600) },
+  };
+}
+
+export async function saveTarif(t: Tarif): Promise<Result> {
+  return run('admin', async me => {
+    await adminDb().doc('settings/tarif').set({ ...bacaTarif(t), diubah: { oleh: me.nama, at: Date.now() } });
+  });
 }
 
 /* ---------------- invoice: terbitkan & ubah isian ---------------- */
@@ -387,7 +455,7 @@ export async function teknisiStatus(id: string, status: Status): Promise<Result>
       const old = normOrder({ id: s.id, ...s.data() });
       bolehOrder(me, old);
       if (old.status === 'Batal') throw new UserError('Order ini sudah dibatalkan admin.');
-      const stokSnaps = await readStok(tx, old.parts.map(p => p.itemId));
+      const stokSnaps = await readStok(tx, idStok(old));
       tx.update(ref, { status, updatedAt: Date.now() });
       applyStock(tx, stokSnaps, old, { ...old, status });
     });
@@ -396,12 +464,12 @@ export async function teknisiStatus(id: string, status: Status): Promise<Result>
 
 /* Laporan teknisi: tambah pekerjaan (harga dari tarif), tambah sparepart (harga jual stok), catatan.
    Harga ditentukan server — teknisi tidak melihat/mengisi harga. */
-export async function teknisiLapor(id: string, v: { items: { layanan: string; unit: string; qty: number }[]; parts: { itemId: string; qty: number }[]; catatan: string }): Promise<Result> {
+export async function teknisiLapor(id: string, v: { items: { layanan: string; unit: string; qty: number; unitId?: string }[]; parts: { itemId: string; qty: number }[]; catatan: string }): Promise<Result> {
   return run('karyawan', async me => {
     const db = adminDb();
     const ref = db.doc('orders/' + str(id, 64));
-    const tarif = ((await db.doc('settings/usaha').get()).get('layanan') || []) as { nama: string; harga: number }[];
-    const addItems = (v.items || []).slice(0, 10).map(i => ({ layanan: str(i.layanan, 120), unit: str(i.unit, 120), qty: Math.max(1, Math.round(num(i.qty)) || 1) })).filter(i => i.layanan);
+    const tarif = bacaTarif((await db.doc('settings/tarif').get()).data());
+    const addItems = (v.items || []).slice(0, 10).map(i => ({ layanan: str(i.layanan, 120), unit: str(i.unit, 160), qty: Math.max(1, Math.round(num(i.qty)) || 1), unitId: str(i.unitId, 20) })).filter(i => i.layanan);
     const addParts = (v.parts || []).slice(0, 20).map(p => ({ itemId: str(p.itemId, 64), qty: r3(Math.max(0, num(p.qty))) })).filter(p => p.itemId && p.qty > 0);
     const catatan = str(v.catatan, 1000);
     if (!addItems.length && !addParts.length && !catatan) throw new UserError('Belum ada yang diisi.');
@@ -411,8 +479,15 @@ export async function teknisiLapor(id: string, v: { items: { layanan: string; un
       const old = normOrder({ id: s.id, ...s.data() });
       bolehOrder(me, old);
       if (old.status === 'Batal') throw new UserError('Order ini sudah dibatalkan admin.');
-      const stokSnaps = await readStok(tx, [...old.parts.map(p => p.itemId), ...addParts.map(p => p.itemId)]);
-      const items = [...old.items, ...addItems.map(i => ({ ...i, harga: +(tarif.find(t => t.nama === i.layanan)?.harga || 0) }))];
+      const stokSnaps = await readStok(tx, [...idStok(old), ...addParts.map(p => p.itemId)]);
+      /* harga dari daftar harga + PK/tipe unit yang dipilih; kalau tidak bisa otomatis, ditandai untuk diisi admin */
+      const pSnap = old.pelangganId ? await tx.get(db.doc('pelanggan/' + old.pelangganId)) : null;
+      const unitsPel = (pSnap?.get('units') || []) as UnitAC[];
+      const items: OrderItem[] = [...old.items, ...addItems.map(i => {
+        const u = unitsPel.find(x => x.id === i.unitId);
+        const h = hargaOtomatis(tarif.layanan.find(t => t.nama === i.layanan), u);
+        return { layanan: i.layanan, unit: u ? labelUnit(u) : i.unit, qty: i.qty, harga: h.harga || 0, ...(u ? { unitId: u.id } : {}), ...(h.harga == null ? { perluHarga: true } : {}) };
+      })];
       const parts: Part[] = old.parts.map(p => ({ ...p }));
       for (const p of addParts) {
         const sn = stokSnaps.get(p.itemId);
@@ -596,7 +671,8 @@ const cleanUnit = (u: UnitAC, intervalDefault: number, lama?: UnitAC): UnitAC =>
   merk: str(u.merk, 40), pk: str(u.pk, 10), tipe: str(u.tipe, 20), freon: str(u.freon, 12), tahun: str(u.tahun, 4),
   servisTerakhir: isDate(str(u.servisTerakhir, 10)) ? str(u.servisTerakhir, 10) : '', perkiraan: !!u.perkiraan,
   intervalBulan: Math.min(24, Math.max(1, Math.round(num(u.intervalBulan)) || intervalDefault || 3)),
-  catatan: str(u.catatan, 500), nonaktif: !!u.nonaktif, riwayat: cleanRiwayat(u.riwayat),
+  catatan: str(u.catatan, 500), nonaktif: !!u.nonaktif, riwayat: cleanRiwayat(u.riwayat), inverter: !!u.inverter,
+  ...(isDate(str(u.garansi?.sampai, 10)) ? { garansi: { sampai: str(u.garansi?.sampai, 10), ket: str(u.garansi?.ket, 300) } } : {}),
   ...(lama?.fotoIndoor ? { fotoIndoor: lama.fotoIndoor } : {}), ...(lama?.fotoOutdoor ? { fotoOutdoor: lama.fotoOutdoor } : {}),
   ...(lama?.dicatat ? { dicatat: lama.dicatat } : {}),
 });
@@ -783,7 +859,7 @@ export async function pasangStiker(v: { pelangganId: string; unitId: string; kod
 
 export type UnitLapanganInput = {
   orderId: string; unitId?: string; gantiUnit?: boolean; kode?: string;
-  gedung: string; label: string; noAc: string; merk: string; pk: string; tipe: string; freon: string; catatan: string;
+  gedung: string; label: string; noAc: string; merk: string; pk: string; tipe: string; freon: string; catatan: string; inverter: boolean;
 };
 /* Teknisi mencatat / memperbarui unit AC di lokasi (dari tugas order). gantiUnit: AC lama diganti baru → spesifikasi lama masuk riwayat.
    Data masuk dengan tanda "Baru dari teknisi" sampai admin mengeceknya. */
@@ -802,13 +878,13 @@ export async function simpanUnitLapangan(v: UnitLapanganInput): Promise<ResultOf
       let gedung = str(v.gedung, 60);
       const sama = gedung && daftarGedung.find(g => g.toLowerCase() === gedung.toLowerCase());
       if (sama) gedung = sama;
-      const spec = { gedung, label, noAc: str(v.noAc, 20), merk: str(v.merk, 40), pk: str(v.pk, 10), tipe: str(v.tipe, 20), freon: str(v.freon, 12), catatan: str(v.catatan, 500) };
+      const spec = { gedung, label, noAc: str(v.noAc, 20), merk: str(v.merk, 40), pk: str(v.pk, 10), tipe: str(v.tipe, 20), freon: str(v.freon, 12), catatan: str(v.catatan, 500), inverter: !!v.inverter };
       let unit = v.unitId ? izin.units.find(u => u.id === v.unitId) : undefined;
       if (v.unitId && !unit) throw new UserError('Unit tidak ditemukan. Muat ulang halaman.');
       if (unit) {
         if (v.gantiUnit) {
           unit.riwayat = [...(unit.riwayat || []), { merk: unit.merk || '', pk: unit.pk || '', tipe: unit.tipe || '', freon: unit.freon || '', tahun: unit.tahun || '', sampai: o.tanggal, ket: 'Diganti unit baru', oleh: me.nama }].slice(-20);
-          unit.tahun = ''; delete unit.fotoIndoor; delete unit.fotoOutdoor;
+          unit.tahun = ''; delete unit.fotoIndoor; delete unit.fotoOutdoor; delete unit.garansi;
         }
         Object.assign(unit, spec);
       } else {
@@ -1232,7 +1308,6 @@ export async function saveSettings(v: Settings): Promise<Result> {
     if (!isTime(jamMasuk) || !isTime(jamMasukMinggu)) throw new UserError('Jam masuk tidak valid.');
     await adminDb().doc('settings/usaha').set({
       nama: str(v.nama, 120), alamat: str(v.alamat, 300), hp: str(v.hp, 30), jamMasuk, jamMasukMinggu, rekening: str(v.rekening, 1000),
-      layanan: (v.layanan || []).slice(0, 100).map(l => ({ nama: str(l.nama, 120), harga: Math.max(0, num(l.harga)) })).filter(l => l.nama),
       templatePengingat: str(v.templatePengingat, 1000),
       rekeningInstansi: str(v.rekeningInstansi, 1000), penanggungJawab: str(v.penanggungJawab, 80), jabatan: str(v.jabatan, 60),
       email: str(v.email, 120), npwp: str(v.npwp, 40),

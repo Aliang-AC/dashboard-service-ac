@@ -184,7 +184,7 @@ export function UnitLapanganDialog({ orderId, unitId }: { orderId: string; unitI
         if (info && !bisa) { toast.error('Stiker yang dipilih tidak bisa dipakai. Pakai stiker lain atau hapus pilihan stiker.'); return false; }
         const r = await simpanUnitLapangan({
           orderId, unitId: u?.id, gantiUnit: ganti, kode: bisa ? info!.kode : '',
-          gedung, label: f.label, noAc: f.noAc, merk: f.merk, pk: f.pk, tipe: f.tipe, freon: f.freon, catatan: f.catatan,
+          gedung, label: f.label, noAc: f.noAc, merk: f.merk, pk: f.pk, tipe: f.tipe, freon: f.freon, catatan: f.catatan, inverter: f.jenisAc === 'Inverter',
         });
         const ok = await run(Promise.resolve(r.ok ? { ok: true as const } : r), u ? 'Unit diperbarui' : 'Unit tersimpan. Tambahkan foto name plate bila perlu.');
         if (ok && r.ok && !u) { open({ kind: 'unit', orderId, unitId: r.data.unitId }); return false; }
@@ -222,6 +222,7 @@ export function UnitLapanganDialog({ orderId, unitId }: { orderId: string; unitI
         <label className="lbl">Merk<input className="field" name="merk" key={'m' + ganti} defaultValue={ganti ? '' : u?.merk || ''} list="merkAc" /></label>
         <label className="lbl">PK<input className="field" name="pk" key={'p' + ganti} defaultValue={ganti ? '' : u?.pk || ''} placeholder="mis. 1" inputMode="decimal" /></label>
         <label className="lbl">Tipe AC<select className="field" name="tipe" key={'t' + ganti} defaultValue={ganti ? 'Split' : u?.tipe || 'Split'}>{TIPE_AC.map(t => <option key={t}>{t}</option>)}</select></label>
+        <label className="lbl">Standard / Inverter<select className="field" name="jenisAc" key={'j' + ganti} defaultValue={!ganti && u?.inverter ? 'Inverter' : 'Standard'}><option>Standard</option><option value="Inverter">Inverter (smart inverter)</option></select></label>
         <label className="lbl">Jenis freon<input className="field" name="freon" key={'f' + ganti} defaultValue={ganti ? '' : u?.freon || ''} list="freonAc" placeholder="R32 / R410A / R22" /></label>
         <label className="lbl span2">Catatan <span className="sm">(opsional)</span><textarea className="field" name="catatan" defaultValue={u?.catatan || ''} placeholder="mis. indoor Daikin 1 PK, outdoor Panasonic; bracket outdoor berkarat" /></label>
       </div>

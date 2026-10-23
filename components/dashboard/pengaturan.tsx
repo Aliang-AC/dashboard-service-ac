@@ -3,32 +3,26 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { backupNow, saveLokasi, saveSettings, setDriveFoto } from '@/app/actions';
-import { layanan } from '@/lib/derive';
 import { formObj, useDash } from './ctx';
 import { TEMPLATE_PENGINGAT } from './pelanggan';
 
 /* Tab ini hanya tampil untuk pemilik. */
 export function Pengaturan() {
   const { d, run } = useDash();
-  const st = d.settings, lay = layanan(d);
+  const st = d.settings;
   const [busy, setBusy] = useState(false);
 
   return (
     <>
       <div className="section-head">
-        <div><h2>Pengaturan usaha</h2><p>Data ini dipakai di kop invoice, jam absensi, dan daftar layanan beserta tarifnya.</p></div>
+        <div><h2>Pengaturan usaha</h2><p>Data ini dipakai di kop invoice, tanda tangan invoice resmi, dan jam absensi.</p></div>
       </div>
       <form className="panel" style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 14 }}
         onSubmit={async e => {
           e.preventDefault();
           const f = formObj(e.currentTarget);
-          /* Satu layanan per baris: "Nama = harga" */
-          const lay = f.layanan.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
-            const i = l.lastIndexOf('=');
-            return i > 0 ? { nama: l.slice(0, i).trim(), harga: +l.slice(i + 1).replace(/[^\d]/g, '') || 0 } : { nama: l, harga: 0 };
-          });
           setBusy(true);
-          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, jamMasukMinggu: f.jamMasukMinggu, rekening: f.rekening, layanan: lay, templatePengingat: f.templatePengingat,
+          await run(saveSettings({ nama: f.nama, alamat: f.alamat, hp: f.hp, jamMasuk: f.jamMasuk, jamMasukMinggu: f.jamMasukMinggu, rekening: f.rekening, templatePengingat: f.templatePengingat,
             rekeningInstansi: f.rekeningInstansi, penanggungJawab: f.penanggungJawab, jabatan: f.jabatan, email: f.email, npwp: f.npwp }), 'Pengaturan tersimpan');
           setBusy(false);
         }}>
@@ -45,11 +39,9 @@ export function Pengaturan() {
           <label className="lbl">Jabatan<input className="field" name="jabatan" defaultValue={st.jabatan || ''} placeholder="mis. Direktur" /></label>
           <label className="lbl">Email usaha<input className="field" name="email" type="email" defaultValue={st.email || ''} placeholder="mis. cv.gloryteknik@gmail.com" /></label>
           <label className="lbl">NPWP (opsional)<input className="field" name="npwp" defaultValue={st.npwp || ''} placeholder="dicetak di kop invoice resmi" /></label>
-          <label className="lbl span2">Daftar layanan &amp; tarif per unit
-            <textarea className="field mono" name="layanan" style={{ minHeight: 160 }} defaultValue={lay.map(l => `${l.nama} = ${+l.harga || 0}`).join('\n')} />
-          </label>
+
         </div>
-        <p className="hint">Satu layanan per baris, format <span className="mono">Nama = harga</span>. Contoh: <span className="mono">Cuci AC 1/2–1 PK = 75000</span>. Tarif otomatis terisi di order dan bisa diubah per order.</p>
+        <p className="hint">Daftar layanan &amp; tarif sekarang diatur di menu <b>Daftar Harga</b>.</p>
         <label className="lbl">Pesan WhatsApp pengingat servis
           <textarea className="field" name="templatePengingat" style={{ minHeight: 90 }} defaultValue={st.templatePengingat || TEMPLATE_PENGINGAT} />
         </label>

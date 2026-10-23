@@ -14,6 +14,7 @@ import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
 import { StikerUnitDialog } from './unit-admin';
 import { UnitLapanganDialog } from './unit-lapangan';
+import { HargaView, KirimHargaDialog } from './harga';
 import { BukaRollDialog, StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
 import { InvoiceView, BayarDialog, InfoInvoiceDialog, TerbitDialog } from './invoice';
@@ -28,7 +29,7 @@ import type { Peran } from '@/lib/types';
 import { APP_NAME } from '@/lib/brand';
 
 const ALL_TABS: [Tab, string][] = [
-  ['ringkasan', 'Ringkasan'], ['order', 'Order & Penjualan'], ['pelanggan', 'Pelanggan'], ['stok', 'Stok'], ['absensi', 'Absensi'],
+  ['ringkasan', 'Ringkasan'], ['order', 'Order & Penjualan'], ['pelanggan', 'Pelanggan'], ['harga', 'Daftar Harga'], ['stok', 'Stok'], ['absensi', 'Absensi'],
   ['invoice', 'Invoice'], ['catatan', 'Catatan'], ['pengaturan', 'Pengaturan'],
 ];
 /* tab yang tampil per peran */
@@ -123,6 +124,7 @@ export function Dashboard() {
             {tab === 'ringkasan' && <Ringkasan />}
             {tab === 'order' && <OrderView />}
             {tab === 'pelanggan' && <PelangganView />}
+            {tab === 'harga' && <HargaView key={d ? JSON.stringify(d.tarif) : ''} />}
             {tab === 'stok' && <StokView />}
             {tab === 'absensi' && <AbsensiView />}
             {tab === 'invoice' && <InvoiceView />}
@@ -139,6 +141,7 @@ export function Dashboard() {
             {modal?.kind === 'unit' && <UnitLapanganDialog key={modal.orderId + (modal.unitId || 'baru')} orderId={modal.orderId} unitId={modal.unitId} onClose={close} />}
             {modal?.kind === 'rekapBaru' && <RekapBaruDialog onClose={close} />}
             {modal?.kind === 'bagikanForm' && <BagikanFormDialog onClose={close} />}
+            {modal?.kind === 'kirimHarga' && <KirimHargaDialog onClose={close} />}
             {modal?.kind === 'bayarRekap' && <BayarRekapDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok' && <StokDialog id={modal.id} onClose={close} />}
             {modal?.kind === 'stok-in' && <StokInDialog id={modal.id} adj={modal.adj} onClose={close} />}

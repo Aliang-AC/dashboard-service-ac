@@ -16,8 +16,8 @@ const fmtPk = (pk?: string) => (pk ? (/pk/i.test(pk) ? pk : pk + ' PK') : '');
 export const lokasiUnit = (u: Pick<UnitAC, 'gedung' | 'label' | 'noAc'>) =>
   [u.gedung, u.label, u.noAc && 'AC no. ' + u.noAc].filter(Boolean).join(' · ');
 /* "Daikin 2 PK Split · R32" */
-export const specUnit = (u: Pick<UnitAC, 'merk' | 'pk' | 'tipe' | 'freon'>) =>
-  [[u.merk, fmtPk(u.pk), u.tipe].filter(Boolean).join(' '), u.freon].filter(Boolean).join(' · ');
+export const specUnit = (u: Pick<UnitAC, 'merk' | 'pk' | 'tipe' | 'freon' | 'inverter'>) =>
+  [[u.merk, fmtPk(u.pk), u.tipe, u.inverter && 'Inverter'].filter(Boolean).join(' '), u.freon].filter(Boolean).join(' · ');
 
 /* Nama gedung disamakan sebelum dibandingkan: "Gdg. Lab" ~ "Gedung Laboratorium" */
 const normGedung = (s: string) => s.toLowerCase().replace(/\b(gedung|gdg|ged)\b\.?/g, '').replace(/[^a-z0-9]/g, '');

@@ -50,10 +50,16 @@ export function rekeningUntuk(st: Settings, pel?: Pelanggan) {
 }
 const alamatUsaha = (st: Settings) => st.alamat || '';
 
-type Baris = { uraian: string; lokasi: string; qty: string; harga: number; jumlah: number };
+type Baris = { uraian: string; lokasi: string; qty: string; harga: number; jumlah: number; rinci?: string };
+/* paket AC baru: rincian unit / alat / jasa ditampilkan kalau harga paket tidak diubah */
+const rinciPaket = (i: Order['items'][number]) => {
+  const p = i.paket;
+  if (!p || p.hargaUnit + p.hargaAlat + p.jasa !== i.harga) return '';
+  return `Unit AC ${p.merk} ${p.pk} PK${p.watt ? ` (${p.watt.toLocaleString('id-ID')} W)` : ''} ${rp(p.hargaUnit)} · Alat lengkap ${rp(p.hargaAlat)} · Jasa pasang ${rp(p.jasa)}${p.garansi ? ` · ${p.garansi}` : ''}`;
+};
 function barisOrder(o: Order): Baris[] {
   return [
-    ...o.items.map(i => ({ uraian: i.layanan, lokasi: i.unit, qty: `${i.qty} unit`, harga: i.harga, jumlah: i.qty * i.harga })),
+    ...o.items.map(i => ({ uraian: i.layanan, lokasi: i.unit, qty: `${i.qty} unit`, harga: i.harga, jumlah: i.qty * i.harga, rinci: rinciPaket(i) })),
     ...(o.parts || []).map(p => ({ uraian: p.nama, lokasi: '', qty: `${p.qty} ${p.satuan || ''}`.trim(), harga: p.harga, jumlah: p.qty * p.harga })),
   ];
 }
@@ -79,7 +85,7 @@ function invoiceBiasa(o: Order, st: Settings, pel: Pelanggan | undefined, today:
       ${!lunas && !o.belumDitagih ? `<div class="sub" style="margin-top:8px">Jatuh tempo: <b>${tempoTeks(o, today)}</b></div>` : ''}</div>
   </div>
   <table><thead><tr><th>Pekerjaan</th><th>Lokasi AC</th><th class="r">Qty</th><th class="r">Harga</th><th class="r">Jumlah</th></tr></thead><tbody>
-    ${barisOrder(o).map(b => `<tr><td>${esc(b.uraian)}</td><td>${esc(b.lokasi) || '<span class="mut">—</span>'}</td><td class="r">${esc(b.qty)}</td><td class="r mono">${rp(b.harga)}</td><td class="r mono">${rp(b.jumlah)}</td></tr>`).join('')}
+    ${barisOrder(o).map(b => `<tr><td>${esc(b.uraian)}${b.rinci ? `<div class="sub">${esc(b.rinci)}</div>` : ''}</td><td>${esc(b.lokasi) || '<span class="mut">—</span>'}</td><td class="r">${esc(b.qty)}</td><td class="r mono">${rp(b.harga)}</td><td class="r mono">${rp(b.jumlah)}</td></tr>`).join('')}
     ${o.diskon ? `<tr><td colspan="4">Diskon</td><td class="r mono">− ${rp(o.diskon)}</td></tr>` : ''}
     <tr class="tot"><td colspan="4">Total</td><td class="r mono">${rp(o.total)}</td></tr>
     ${o.pembayaran.map(p => `<tr><td colspan="4" class="mut">Dibayar ${fmtLong(p.tanggal)} · ${esc(p.metode)}</td><td class="r mono mut">− ${rp(p.jumlah)}</td></tr>`).join('')}
@@ -119,7 +125,7 @@ function invoiceResmi(o: Order, st: Settings, pel: Pelanggan | undefined, today:
     ${!lunas ? `<span class="mut">Jatuh tempo</span><span><b>${tempoTeks(o, today)}</b></span>` : ''}
   </div>
   <table><thead><tr><th style="width:30px">No</th><th>Uraian pekerjaan</th><th>Lokasi</th><th class="r">Qty</th><th class="r">Harga satuan</th><th class="r">Jumlah</th></tr></thead><tbody>
-    ${barisOrder(o).map((b, i) => `<tr><td>${i + 1}</td><td>${esc(b.uraian)}</td><td>${esc(b.lokasi)}</td><td class="r">${esc(b.qty)}</td><td class="r mono">${rp(b.harga)}</td><td class="r mono">${rp(b.jumlah)}</td></tr>`).join('')}
+    ${barisOrder(o).map((b, i) => `<tr><td>${i + 1}</td><td>${esc(b.uraian)}${b.rinci ? `<div class="sub">${esc(b.rinci)}</div>` : ''}</td><td>${esc(b.lokasi)}</td><td class="r">${esc(b.qty)}</td><td class="r mono">${rp(b.harga)}</td><td class="r mono">${rp(b.jumlah)}</td></tr>`).join('')}
     ${o.diskon ? `<tr><td colspan="5">Diskon</td><td class="r mono">− ${rp(o.diskon)}</td></tr>` : ''}
     <tr class="tot"><td colspan="5">Jumlah tagihan</td><td class="r mono">${rp(o.total)}</td></tr>
     ${o.pembayaran.map(p => `<tr><td colspan="5" class="mut">Dibayar ${fmtLong(p.tanggal)} · ${esc(p.metode)}</td><td class="r mono mut">− ${rp(p.jumlah)}</td></tr>`).join('')}

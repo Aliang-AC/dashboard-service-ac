@@ -83,7 +83,7 @@ export function FotoGaleri({ o, bisaTambah }: { o: Order; bisaTambah: boolean })
   );
 }
 
-type Baru = { key: number; layanan: string; unit: string; qty: string };
+type Baru = { key: number; layanan: string; unit: string; unitId: string; qty: string };
 type PartBaru = { key: number; itemId: string; qty: string };
 let k = 0;
 
@@ -94,7 +94,7 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
   const p = d.pelanggan.find(x => x.id === o?.pelangganId);
   const [items, setItems] = useState<Baru[]>([]);
   const [parts, setParts] = useState<PartBaru[]>([]);
-  const lay = d.settings.layanan || [];
+  const lay = d.tarif.layanan;
   const stok = d.stok.slice().sort((a, b) => a.nama.localeCompare(b.nama));
   if (!o) return null;
   const units = [...new Set(o.items.map(i => i.unit).filter(Boolean))];
@@ -105,7 +105,7 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
         const f = formObj(form);
         if (!items.length && !parts.length && !f.catatan?.trim()) return Promise.resolve(true);
         return run(teknisiLapor(o.id, {
-          items: items.map(i => ({ layanan: i.layanan, unit: i.unit, qty: +i.qty || 1 })),
+          items: items.map(i => ({ layanan: i.layanan, unit: i.unit, unitId: i.unitId, qty: +i.qty || 1 })),
           parts: parts.filter(p => p.itemId).map(p => ({ itemId: p.itemId, qty: +p.qty || 0 })),
           catatan: f.catatan || '',
         }), 'Laporan terkirim');
@@ -167,12 +167,17 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
             <select className="field" value={i.layanan} onChange={e => setItems(xs => xs.map(x => (x.key === i.key ? { ...x, layanan: e.target.value } : x)))}>
               {lay.map(l => <option key={l.nama}>{l.nama}</option>)}
             </select>
-            <input className="field" list="unitTugas" placeholder="Unit / lokasi" value={i.unit} onChange={e => setItems(xs => xs.map(x => (x.key === i.key ? { ...x, unit: e.target.value } : x)))} />
+            {p?.units?.length
+              ? <select className="field" aria-label="Unit AC" value={i.unitId} onChange={e => setItems(xs => xs.map(x => (x.key === i.key ? { ...x, unitId: e.target.value, unit: '' } : x)))}>
+                  <option value="">— pilih unit AC —</option>
+                  {p.units.filter(u => !u.nonaktif).map(u => <option key={u.id} value={u.id}>{lokasiUnit(u) || 'Unit'} · {specUnit(u)}</option>)}
+                </select>
+              : <input className="field" list="unitTugas" placeholder="Unit / lokasi" value={i.unit} onChange={e => setItems(xs => xs.map(x => (x.key === i.key ? { ...x, unit: e.target.value } : x)))} />}
             <input className="field" type="number" min={1} value={i.qty} onChange={e => setItems(xs => xs.map(x => (x.key === i.key ? { ...x, qty: e.target.value } : x)))} />
             <Button type="button" variant="outline" size="icon" aria-label="Hapus" onClick={() => setItems(xs => xs.filter(x => x.key !== i.key))}>×</Button>
           </div>
         ))}
-        <div><Button type="button" size="sm" variant="outline" disabled={!lay.length} onClick={() => setItems(xs => [...xs, { key: ++k, layanan: lay[0]?.nama || '', unit: '', qty: '1' }])}>+ Pekerjaan tambahan</Button></div>
+        <div><Button type="button" size="sm" variant="outline" disabled={!lay.length} onClick={() => setItems(xs => [...xs, { key: ++k, layanan: lay[0]?.nama || '', unit: '', unitId: '', qty: '1' }])}>+ Pekerjaan tambahan</Button></div>
       </fieldset>
 
       <fieldset className="box">
