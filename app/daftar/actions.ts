@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto';
 import { headers } from 'next/headers';
 import { adminDb } from '@/lib/firebase-admin';
+import { tandaiBerubah } from '@/lib/versi';
 import { todayWIB } from '@/lib/format';
 import { normalHp } from '@/lib/pin';
 import { perkiraanTanggal } from '@/lib/servis';
@@ -79,6 +80,7 @@ export async function daftarKonsumen(v: DaftarInput): Promise<{ ok: true } | { o
         });
       }
     });
+    await tandaiBerubah();
     return { ok: true };
   } catch (e) {
     console.error(e);

@@ -1,6 +1,7 @@
 import 'server-only';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { adminDb } from './firebase-admin';
+import { tandaiBerubah } from './versi';
 import { a1, isDefaultTab, sheetsApi } from './sheets';
 import { fmtMonth } from './format';
 import { HARI, jamMasukTgl, type AbsRecord, type Absensi, type Karyawan, type Lokasi } from './types';
@@ -74,7 +75,7 @@ export async function tandaiAlpa(tanggal: string) {
     if (k.createdAt && k.createdAt > endOfDay) return;
     patch[k.id] = { status: 'Alpa', via: 'Otomatis', ket: 'Tidak absen' };
   });
-  if (Object.keys(patch).length) await db.doc('absensi/' + tanggal).set({ tanggal, records: patch }, { merge: true });
+  if (Object.keys(patch).length) { await db.doc('absensi/' + tanggal).set({ tanggal, records: patch }, { merge: true }); await tandaiBerubah(); }
   return Object.keys(patch).length;
 }
 

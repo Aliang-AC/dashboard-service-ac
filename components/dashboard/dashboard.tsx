@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
 import { UserButton } from '@clerk/nextjs';
@@ -7,7 +7,7 @@ import {
   Bell, Building2, CalendarDays, Clock, LayoutDashboard, MenuIcon, NotebookPen, Package, QrCode, Receipt, RefreshCwIcon, Settings,
   Snowflake, Tag, Users, Warehouse, Wrench, type LucideIcon,
 } from 'lucide-react';
-import { loadAll } from '@/app/actions';
+import { loadAll, versiData } from '@/app/actions';
 import { Button } from '@/components/ui/button';
 import { dueNotes, isLow } from '@/lib/derive';
 import type { AllData, Result } from '@/lib/types';
@@ -83,11 +83,14 @@ async function fetchAll() {
 }
 
 export function Dashboard() {
-  /* Data dibaca ulang tiap 15 detik & saat tab browser aktif lagi, supaya isian karyawan lain ikut muncul. */
+  /* Hemat database: tiap 15 detik (dan saat aplikasi dibuka lagi) hanya mengecek penanda versi data yang kecil;
+     semua data baru dimuat ulang kalau ada perubahan dari orang lain. */
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const { data: d, error, mutate, isValidating } = useSWR('all', fetchAll, {
-    refreshInterval: 15000, revalidateOnFocus: true, keepPreviousData: true, onSuccess: () => setUpdatedAt(new Date()),
+    refreshInterval: 0, revalidateOnFocus: false, keepPreviousData: true, onSuccess: () => setUpdatedAt(new Date()),
   });
+  const { data: versi } = useSWR('versi', versiData, { refreshInterval: 15000, revalidateOnFocus: true, dedupingInterval: 4000 });
+  useEffect(() => { if (versi && d && versi !== d.versi) mutate(); }, [versi, d, mutate]);
   const [rawTab, setTab] = useState<Tab>(() => {
     try { const t = localStorage.getItem('sac-tab') as Tab | null; if (t && SEMUA_TAB.includes(t)) return t; } catch {}
     return 'ringkasan';

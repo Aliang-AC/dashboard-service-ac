@@ -10,6 +10,7 @@ import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
 import { buangFoto, fotoAktif, sambungSkrip, uploadFoto } from '@/lib/drive';
 import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
+import { bacaVersi, tandaiBerubah } from '@/lib/versi';
 import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { labelUnit, tambahBulan } from '@/lib/servis';
 import { pakaiRoll } from '@/lib/stok';
@@ -31,11 +32,14 @@ const ROLE_MSG: Record<Peran, string> = {
   karyawan: 'Akun ini belum punya akses.',
 };
 
-async function guarded<T>(min: Peran, fn: (me: Me) => Promise<T>): Promise<ResultOf<T>> {
+/* baca = aksi yang hanya membaca (tidak menandai data berubah) */
+async function guarded<T>(min: Peran, fn: (me: Me) => Promise<T>, baca = false): Promise<ResultOf<T>> {
   try {
     const me = await requireMe();
     if (!atLeast(me.peran, min)) throw new UserError(ROLE_MSG[min]);
-    return { ok: true, data: await fn(me) };
+    const data = await fn(me);
+    if (!baca) await tandaiBerubah();
+    return { ok: true, data };
   } catch (e) {
     console.error(e);
     const msg = e instanceof UserError || (e instanceof Error && /akses|Database/.test(e.message)) ? e.message : 'Gagal menyimpan. Periksa koneksi lalu coba lagi.';
@@ -57,6 +61,7 @@ const r3 = (n: number) => +n.toFixed(3);
 export async function loadAll(): Promise<ResultOf<AllData>> {
   const r = await guarded('karyawan', async me => {
     const db = adminDb();
+    const versi = await bacaVersi();
     const docs = <T,>(s: FirebaseFirestore.QuerySnapshot) => s.docs.map(d => ({ id: d.id, ...d.data() }) as T);
     const staff = atLeast(me.peran, 'admin');
     const [orders, stok, mutasi, karyawan, absensi, catatan, settings, tarifSnap, lokasi, backup, pelanggan, adaFoto] = await Promise.all([
@@ -105,12 +110,12 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
       pelanggan: pl, rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto,
-      settings: st, tarif, lokasi: lok, today: todayWIB(),
+      settings: st, tarif, lokasi: lok, today: todayWIB(), versi,
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
       arsipUrl: arsipId ? `https://docs.google.com/spreadsheets/d/${arsipId}/edit` : null,
     } satisfies AllData;
-  });
+  }, true);
   if (!r.ok && r.error.startsWith('Gagal menyimpan')) return { ok: false, error: 'Gagal memuat data.' };
   return r;
 }
@@ -852,7 +857,7 @@ export async function daftarStikerKosong(): Promise<ResultOf<Stiker[]>> {
   return guarded('admin', async () => {
     const q = await adminDb().collection('stiker').where('status', '==', 'kosong').get();
     return q.docs.map(d => d.data() as Stiker).sort((a, b) => a.kode.localeCompare(b.kode));
-  });
+  }, true);
 }
 
 export type InfoStiker = { kode: string; status: StatusStiker | 'tidak ada'; pelangganId?: string; unitId?: string; pelanggan?: string; alamat?: string; lokasi?: string; spec?: string };
@@ -868,7 +873,7 @@ export async function cekStiker(teks: string): Promise<ResultOf<InfoStiker>> {
     const p = await db.doc('pelanggan/' + st.pelangganId).get();
     const u = ((p.get('units') || []) as UnitAC[]).find(x => x.id === st.unitId);
     return { kode, status: 'aktif', pelangganId: st.pelangganId, unitId: st.unitId, pelanggan: p.get('nama') || '', alamat: p.get('alamat') || '', lokasi: u ? lokasiUnit(u) : '', spec: u ? specUnit(u) : '' };
-  });
+  }, true);
 }
 
 /* Karyawan hanya boleh mengubah unit milik pelanggan dari order yang ia tangani. Dibaca di fase baca transaksi. */
@@ -1242,7 +1247,7 @@ export async function hapusAkun(kid: string): Promise<Result> {
 /* ---------------- absensi ---------------- */
 /* Token QR untuk Layar Absen (pemilik/admin). Berganti tiap 30 detik. */
 export async function qrToken(): Promise<ResultOf<{ token: string; sisa: number }>> {
-  return guarded('admin', async () => buatTokenQR());
+  return guarded('admin', async () => buatTokenQR(), true);
 }
 
 /* Karyawan scan QR di bengkel: cek token, cek GPS ≤ radius, lalu catat masuk (atau pulang kalau sudah masuk). */
@@ -1384,6 +1389,12 @@ export async function saveTemplateAjak(teks: string): Promise<Result> {
     if (t && !t.includes('{link}')) throw new UserError('Pesan harus memuat {link} supaya link form ikut terkirim.');
     await adminDb().doc('settings/usaha').set({ templateAjakForm: t }, { merge: true });
   });
+}
+
+/* versi data terakhir — dicek dashboard tiap 15 detik (1 pembacaan kecil) */
+export async function versiData(): Promise<number> {
+  const r = await guarded('karyawan', async () => bacaVersi(), true);
+  return r.ok ? r.data : 0;
 }
 
 /* pesan WA otomatis di halaman scan stiker ({kode}, {lokasi}, {ruangan}, {gedung}, {merk}) */

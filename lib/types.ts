@@ -151,6 +151,7 @@ export type AllData = {
   tarif: Tarif; // daftar harga (karyawan: hanya nama layanan, tanpa harga & paket)
   absensi: Absensi[]; catatan: Catatan[]; settings: Settings; lokasi: Lokasi | null;
   today: string;
+  versi: number; // penanda versi data saat dimuat
   /* hanya diisi untuk pemilik */
   backup: { at: number; rows: number } | null; backupUrl: string | null; arsipUrl: string | null;
 };
