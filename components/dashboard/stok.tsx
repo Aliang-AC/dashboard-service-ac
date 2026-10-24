@@ -34,7 +34,7 @@ export function StokView() {
       {list.length ? (
         <div className="tablebox">
           <table>
-            <thead><tr><th>Barang</th><th>Kategori</th><th className="r">Sisa</th><th className="r">Min.</th>{owner && <th className="r">Harga beli</th>}<th className="r">Harga jual</th><th></th></tr></thead>
+            <thead><tr><th>Barang</th><th>Kategori</th><th className="r">Sisa</th><th className="r">Min.</th>{owner && <th className="r">Harga beli</th>}<th className="r">Harga konsumen</th><th className="r">Harga mitra</th><th></th></tr></thead>
             <tbody>
               {list.map(s => {
                 const out = totalStok(s) <= 0, low = isLow(s);
@@ -46,6 +46,7 @@ export function StokView() {
                     <td className="r num">{+s.min || 0}</td>
                     {owner && <td className="r num">{rp(s.hargaBeli)}</td>}
                     <td className="r num">{rp(s.hargaJual)}</td>
+                    <td className="r num">{s.hargaMitra ? rp(s.hargaMitra) : <span className="sm">—</span>}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <Button size="sm" variant="secondary" onClick={() => open({ kind: 'stok-in', id: s.id, adj: false })}>+ Masuk</Button>{' '}
                       {s.roll && !!s.rolls?.length && <><Button size="sm" variant="outline" onClick={() => open({ kind: 'stok-buka', id: s.id })}>Buka roll</Button>{' '}</>}
@@ -133,7 +134,7 @@ export function StokDialog({ id, onClose }: { id?: string; onClose: () => void }
       onSubmit={form => {
         const f = formObj(form);
         const v = {
-          nama: f.nama, kategori: f.kategori, satuan: f.satuan, min: +f.min || 0, hargaBeli: +f.hargaBeli || 0, hargaJual: +f.hargaJual || 0, qty: +f.qty || 0,
+          nama: f.nama, kategori: f.kategori, satuan: f.satuan, min: +f.min || 0, hargaBeli: +f.hargaBeli || 0, hargaJual: +f.hargaJual || 0, hargaMitra: +f.hargaMitra || 0, qty: +f.qty || 0,
           roll, panjangRoll: panjang, rolls: rolls.filter(x => x > 0),
         };
         return run(saveStok(s?.id || null, v), s ? 'Barang diperbarui' : 'Barang ditambahkan');
@@ -155,7 +156,8 @@ export function StokDialog({ id, onClose }: { id?: string; onClose: () => void }
         {s && !roll && s.roll && !!s.rolls?.length && <p className="hint span2">Roll utuh yang tersisa ({ringkasRoll(s)}) akan digabung jadi stok biasa.</p>}
         <label className="lbl">Batas minimum{roll ? ' (total meter)' : ''}<input className="field" type="number" name="min" min={0} step="any" defaultValue={s?.min ?? 1} /></label>
         {owner && <label className="lbl">Harga beli{perM} (Rp)<input className="field" type="number" name="hargaBeli" min={0} step={50} defaultValue={s?.hargaBeli ?? ''} /></label>}
-        <label className="lbl">Harga jual{perM} (Rp)<input className="field" type="number" name="hargaJual" min={0} step={50} defaultValue={s?.hargaJual ?? ''} /></label>
+        <label className="lbl">Harga jual konsumen{perM} (Rp)<input className="field" type="number" name="hargaJual" min={0} step={50} defaultValue={s?.hargaJual ?? ''} /></label>
+        <label className="lbl">Harga mitra{perM} (Rp) <span className="sm">(teknisi luar / toko / subdealer)</span><input className="field" type="number" name="hargaMitra" min={0} step={50} defaultValue={s?.hargaMitra || ''} placeholder="kosong = sama dengan harga konsumen" /></label>
       </div>
     </FormDialog>
   );

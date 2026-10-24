@@ -20,7 +20,7 @@ const isMerah = (r: AbsRecord | undefined, jamMasuk: string, lewat: boolean) =>
   r?.status === 'Alpa' || telatMenit(r, jamMasuk) > 0 || (lewat && r?.status === 'Hadir' && !!r.masuk && !r.pulang);
 const mapsLink = (l?: { lat: number; lng: number }) => (l ? `https://www.google.com/maps?q=${l.lat},${l.lng}` : '');
 
-function StatusPill({ r, k, tgl, jamMasuk }: { r?: AbsRecord; k?: Karyawan; tgl: string; jamMasuk: string }) {
+export function StatusPill({ r, k, tgl, jamMasuk }: { r?: AbsRecord; k?: Karyawan; tgl: string; jamMasuk: string }) {
   if (r?.status) {
     const t = telatMenit(r, jamMasuk);
     return <span className={`pill ${t ? 'bad' : ABS_CLS[r.status] || ''}`}>{r.status}{t ? ` · telat ${t} mnt` : ''}</span>;

@@ -3,40 +3,78 @@ import { useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
 import { UserButton } from '@clerk/nextjs';
-import { RefreshCwIcon } from 'lucide-react';
+import {
+  Bell, Building2, CalendarDays, Clock, LayoutDashboard, MenuIcon, NotebookPen, Package, QrCode, Receipt, RefreshCwIcon, Settings,
+  Snowflake, Tag, Users, Warehouse, Wrench, type LucideIcon,
+} from 'lucide-react';
 import { loadAll } from '@/app/actions';
-import { Logo } from '@/components/auth-shell';
 import { Button } from '@/components/ui/button';
-import { dueNotes, isLow, unpaid } from '@/lib/derive';
-import type { Result } from '@/lib/types';
+import { dueNotes, isLow } from '@/lib/derive';
+import type { AllData, Result } from '@/lib/types';
 import { DashCtx, type Ctx, type Modal, type Tab } from './ctx';
 import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
 import { StikerUnitDialog } from './unit-admin';
 import { UnitLapanganDialog } from './unit-lapangan';
 import { HargaView, KirimHargaDialog } from './harga';
+import { PenjualanDialog, PenjualanView } from './penjualan';
 import { BukaRollDialog, StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
 import { InvoiceView, BayarDialog, InfoInvoiceDialog, TerbitDialog } from './invoice';
-import { PelangganView, PelangganDialog } from './pelanggan';
+import { PelangganView, PelangganDialog, perluDiingatkan } from './pelanggan';
 import { TugasDialog } from './tugas';
-import { RekapBaruDialog, BayarRekapDialog } from './rekap';
+import { RekapBaruDialog, BayarRekapDialog, RekapView } from './rekap';
 import { BagikanFormDialog } from './bagikan';
 import { CatatanView, NoteDialog } from './catatan';
 import { Pengaturan } from './pengaturan';
 import { FormDialog } from './form-dialog';
 import type { Peran } from '@/lib/types';
-import { APP_NAME } from '@/lib/brand';
+import { MEREK } from '@/lib/brand';
 
-const ALL_TABS: [Tab, string][] = [
-  ['ringkasan', 'Ringkasan'], ['order', 'Order & Penjualan'], ['pelanggan', 'Pelanggan'], ['harga', 'Daftar Harga'], ['stok', 'Stok'], ['absensi', 'Absensi'],
-  ['invoice', 'Invoice'], ['catatan', 'Catatan'], ['pengaturan', 'Pengaturan'],
+/* Menu samping berkelompok. href = buka halaman terpisah (tab baru). */
+type ItemMenu = { key: Tab | 'stiker'; label: string; ic: LucideIcon; href?: string };
+const MENU: { grup: string; items: ItemMenu[] }[] = [
+  { grup: 'Beranda', items: [{ key: 'ringkasan', label: 'Dashboard', ic: LayoutDashboard }] },
+  { grup: 'Operasional', items: [{ key: 'order', label: 'Jadwal & Order', ic: CalendarDays }, { key: 'absensi', label: 'Absensi Karyawan', ic: Clock }] },
+  { grup: 'Sales & Penjualan', items: [
+    { key: 'jasa', label: 'Jasa Service AC', ic: Snowflake }, { key: 'unitac', label: 'Penjualan Unit AC', ic: Package },
+    { key: 'sparepart', label: 'Penjualan Sparepart', ic: Wrench }, { key: 'harga', label: 'Daftar Harga', ic: Tag },
+  ] },
+  { grup: 'Pelanggan', items: [
+    { key: 'pelanggan', label: 'Data Pelanggan', ic: Users }, { key: 'pengingat', label: 'Pengingat Servis', ic: Bell },
+    { key: 'stiker', label: 'Stiker QR', ic: QrCode, href: '/stiker' },
+  ] },
+  { grup: 'Keuangan', items: [{ key: 'invoice', label: 'Invoice & Pembayaran', ic: Receipt }, { key: 'tagihan', label: 'Tagihan Instansi', ic: Building2 }] },
+  { grup: 'Gudang', items: [{ key: 'stok', label: 'Stok Barang', ic: Warehouse }] },
+  { grup: 'Lainnya', items: [{ key: 'catatan', label: 'Catatan', ic: NotebookPen }, { key: 'pengaturan', label: 'Pengaturan', ic: Settings }] },
 ];
-/* tab yang tampil per peran */
-const tabsFor = (p: Peran): [Tab, string][] =>
-  p === 'owner' ? ALL_TABS
-    : p === 'admin' ? ALL_TABS.filter(([k]) => k !== 'pengaturan')
-      : [['absensi', 'Absensi saya'], ['order', 'Jadwal saya'], ['catatan', 'Catatan']];
+const MENU_TEKNISI: { grup: string; items: ItemMenu[] }[] = [
+  { grup: 'Menu saya', items: [
+    { key: 'order', label: 'Jadwal saya', ic: CalendarDays }, { key: 'absensi', label: 'Absensi saya', ic: Clock }, { key: 'catatan', label: 'Catatan', ic: NotebookPen },
+  ] },
+];
+const menuFor = (p: Peran) => (p === 'karyawan' ? MENU_TEKNISI
+  : p === 'admin' ? MENU.map(g => ({ ...g, items: g.items.filter(i => i.key !== 'pengaturan') }))
+    : MENU);
+const SEMUA_TAB = MENU.flatMap(g => g.items.map(i => i.key));
+const PERAN_LABEL: Record<Peran, string> = { owner: 'Pemilik', admin: 'Admin', karyawan: 'Teknisi' };
+
+/* angka kecil di samping menu: merah = perlu segera, oranye = perlu dicek */
+function badgeMenu(d: AllData): Partial<Record<Tab, { n: number; w?: boolean }>> {
+  if (d.me.peran === 'karyawan') return { catatan: { n: dueNotes(d).length } };
+  const t = d.today;
+  const lewat = d.orders.filter(o => !o.belumDitagih && o.bayar !== 'Lunas' && o.status !== 'Batal' && !!o.jatuhTempo && o.jatuhTempo < t).length;
+  const belumTagih = d.orders.filter(o => o.belumDitagih && o.status === 'Selesai' && !o.rekapId).length;
+  return {
+    order: { n: d.orders.filter(o => o.items.some(i => i.perluHarga) && o.status !== 'Batal').length, w: true },
+    pengingat: { n: d.pelanggan.filter(p => perluDiingatkan(d, p)).length },
+    pelanggan: { n: d.pelanggan.filter(p => p.baru || p.cekTeknisi).length, w: true },
+    invoice: { n: lewat },
+    tagihan: { n: belumTagih, w: true },
+    stok: { n: d.stok.filter(isLow).length, w: true },
+    catatan: { n: dueNotes(d).length, w: true },
+  };
+}
 
 async function fetchAll() {
   const r = await loadAll();
@@ -51,17 +89,21 @@ export function Dashboard() {
     refreshInterval: 15000, revalidateOnFocus: true, keepPreviousData: true, onSuccess: () => setUpdatedAt(new Date()),
   });
   const [rawTab, setTab] = useState<Tab>(() => {
-    try { const t = localStorage.getItem('sac-tab') as Tab | null; if (t && ALL_TABS.some(x => x[0] === t)) return t; } catch {}
+    try { const t = localStorage.getItem('sac-tab') as Tab | null; if (t && SEMUA_TAB.includes(t)) return t; } catch {}
     return 'ringkasan';
   });
-  const TABS = d ? tabsFor(d.me.peran) : [];
-  /* tab tersimpan bisa tidak berlaku untuk peran ini → pakai tab pertama */
-  const tab: Tab = TABS.some(x => x[0] === rawTab) ? rawTab : TABS[0]?.[0] || 'ringkasan';
+  const [laci, setLaci] = useState(false); // menu samping terbuka (HP)
+  const menu = d ? menuFor(d.me.peran) : [];
+  const bolehTab = menu.flatMap(g => g.items.filter(i => !i.href).map(i => i.key as Tab));
+  /* tab tersimpan bisa tidak berlaku untuk peran ini → pakai menu pertama */
+  const tab: Tab = bolehTab.includes(rawTab) ? rawTab : bolehTab[0] || 'ringkasan';
+  const judulTab = menu.flatMap(g => g.items).find(i => i.key === tab)?.label || '';
   const [modal, setModal] = useState<Modal | null>(null);
   const [invSel, setInvSel] = useState<string | null>(null);
 
   const go = useCallback<Ctx['go']>((t, extra) => {
     setTab(t);
+    setLaci(false);
     if (extra?.invSel !== undefined) setInvSel(extra.invSel);
     try { localStorage.setItem('sac-tab', t); } catch {}
     window.scrollTo(0, 0);
@@ -77,42 +119,55 @@ export function Dashboard() {
   }, [mutate]);
 
   const ctx = useMemo<Ctx | null>(() => (d ? { d, run, go, open: setModal, invSel, setInvSel } : null), [d, run, go, invSel]);
-
-  const badges: Partial<Record<Tab, number>> = d && d.me.peran !== 'karyawan' ? { stok: d.stok.filter(isLow).length, invoice: unpaid(d).length, catatan: dueNotes(d).length } : {};
+  const badges = d ? badgeMenu(d) : {};
   const close = () => setModal(null);
 
   return (
-    <>
-      <header className="top">
-        <div className="wrap">
-          <div className="flex flex-wrap items-center gap-3 pt-3 pb-1.5">
-            <Logo />
+    <div className="shell">
+      <div className={`shade${laci ? ' buka' : ''}`} onClick={() => setLaci(false)} aria-hidden />
+      <aside className={`side${laci ? ' buka' : ''}`} aria-label="Menu">
+        <div className="brand">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <span className="lg"><img src="/logo.svg" alt="" width={32} height={32} /></span>
+          <span><b>{MEREK}</b><small>{d ? PERAN_LABEL[d.me.peran] : ''}</small></span>
+        </div>
+        {menu.map(g => (
+          <div key={g.grup}>
+            <div className="grp">{g.grup}</div>
+            {g.items.map(i => {
+              const Ic = i.ic, b = i.href ? undefined : badges[i.key as Tab];
+              return i.href
+                ? <a key={i.key} className="it" href={i.href} target="_blank" rel="noopener"><Ic />{i.label}</a>
+                : (
+                  <button key={i.key} className="it" aria-current={tab === i.key ? 'page' : undefined} onClick={() => go(i.key as Tab)}>
+                    <Ic />{i.label}{b?.n ? <span className={`badge${b.w ? ' w' : ''}`}>{b.n}</span> : null}
+                  </button>
+                );
+            })}
+          </div>
+        ))}
+        <div className="foot"><UserButton /><span>{d?.me.nama}</span></div>
+      </aside>
+
+      <div style={{ minWidth: 0 }}>
+        <header className="mainbar">
+          <div className="in">
+            <Button variant="ghost" size="icon" className="menu-btn min-[901px]:hidden" aria-label="Buka menu" onClick={() => setLaci(true)}><MenuIcon /></Button>
             <div className="min-w-0 flex-1">
-              <h1 className="text-[1.45rem] leading-tight">{APP_NAME}</h1>
-              <div className="muted text-[.85rem]">
-                {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' })}
-              </div>
+              <b className="text-[1.05rem]">{judulTab}</b>
+              <div className="muted text-[.8rem]">{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' })}</div>
             </div>
             <div className="muted flex items-center gap-1.5 text-[.78rem]">
               <span className="inline-block size-2 rounded-full" style={{ background: error ? 'var(--bad)' : d ? 'var(--good)' : 'var(--ink-2)' }} />
-              {error ? 'Gagal memuat' : updatedAt ? `Tersimpan bersama · ${updatedAt.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}` : 'Memuat…'}
+              <span className="hidden sm:inline">{error ? 'Gagal memuat' : updatedAt ? `Tersimpan · ${updatedAt.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}` : 'Memuat…'}</span>
               <Button variant="ghost" size="icon-xs" aria-label="Muat ulang data" onClick={() => mutate()} disabled={isValidating}>
                 <RefreshCwIcon className={isValidating ? 'animate-spin' : ''} />
               </Button>
             </div>
-            <UserButton />
           </div>
-          <nav className="tabs" aria-label="Menu" role="tablist">
-            {TABS.map(([k, l]) => (
-              <button key={k} role="tab" aria-selected={tab === k} onClick={() => go(k)}>
-                {l}{badges[k] ? <span className="badge">{badges[k]}</span> : null}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </header>
+        </header>
 
-      <main className="wrap pt-5 pb-16">
+      <main className="isi">
         {!ctx ? (
           error ? (
             <div className="panel empty"><b>Data gagal dimuat</b>{error.message} <button className="linkbtn" onClick={() => mutate()}>Coba lagi</button></div>
@@ -123,13 +178,25 @@ export function Dashboard() {
           <DashCtx.Provider value={ctx}>
             {tab === 'ringkasan' && <Ringkasan />}
             {tab === 'order' && <OrderView />}
-            {tab === 'pelanggan' && <PelangganView />}
+            {tab === 'jasa' && <OrderView jenis="jasa" />}
+            {tab === 'unitac' && <PenjualanView jenis="unit" />}
+            {tab === 'sparepart' && <PenjualanView jenis="sparepart" />}
+            {tab === 'pelanggan' && <PelangganView key="semua" />}
+            {tab === 'pengingat' && <PelangganView key="ingat" awal="Dihubungi" />}
             {tab === 'harga' && <HargaView key={d ? JSON.stringify(d.tarif) : ''} />}
             {tab === 'stok' && <StokView />}
             {tab === 'absensi' && <AbsensiView />}
             {tab === 'invoice' && <InvoiceView />}
+            {tab === 'tagihan' && (
+              <>
+                <div className="section-head"><div><h2>Tagihan instansi</h2><p>Gabungkan pekerjaan instansi (RSUD, kantor, dll.) menjadi satu tagihan resmi, lalu catat pembayarannya.</p></div></div>
+                <RekapView />
+              </>
+            )}
             {tab === 'catatan' && <CatatanView />}
             {tab === 'pengaturan' && <Pengaturan />}
+
+            {modal?.kind === 'jual' && <PenjualanDialog key={modal.id || 'baru'} id={modal.id} jenis={modal.jenis} onClose={close} />}
 
             {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new-' + (modal.pelangganId || '')} id={modal.id} pelangganId={modal.pelangganId} unitIds={modal.unitIds} onClose={close} />}
             {modal?.kind === 'stikerUnit' && <StikerUnitDialog key={modal.unitId} pelangganId={modal.pelangganId} unitId={modal.unitId} onClose={close} />}
@@ -161,6 +228,7 @@ export function Dashboard() {
           </DashCtx.Provider>
         )}
       </main>
-    </>
+      </div>
+    </div>
   );
 }

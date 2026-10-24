@@ -11,6 +11,9 @@ export type Metode = (typeof METODE)[number];
 export type Pembayaran = { id: string; tanggal: string; jumlah: number; metode: Metode; ket: string; oleh: string; at: number };
 export type BayarStatus = 'Lunas' | 'Sebagian' | 'Belum dibayar';
 
+/* penjualan langsung: konsumen (harga jual biasa) atau mitra = teknisi luar / toko / subdealer (harga mitra) */
+export const PEMBELI = { konsumen: 'Konsumen', mitra: 'Mitra (teknisi / toko / subdealer)' } as const;
+export type Pembeli = keyof typeof PEMBELI;
 /* Isian khusus invoice (bisa diubah admin): model kop, Kepada Yth./u.p., perihal, no. referensi instansi, catatan. */
 export const MODEL_INVOICE = ['biasa', 'resmi'] as const;
 export type InfoInvoice = { model?: (typeof MODEL_INVOICE)[number]; kepada?: string; perihal?: string; noRef?: string; catatan?: string; diubah?: { oleh: string; at: number }[] };
@@ -28,6 +31,7 @@ export type Order = {
   foto: Foto[]; catatanTeknisi: string;
   rekapId: string; // kalau ditagih lewat invoice gabungan bulanan
   belumDitagih: boolean; tglInvoice: string; inv: InfoInvoice;
+  jual?: { pembeli: Pembeli } | null; // penjualan langsung (barang saja, tanpa jasa/jadwal)
   invoice: string; createdAt: number; updatedAt: number; paidAt: string | null;
 };
 /* Invoice gabungan bulanan untuk instansi: mengelompokkan beberapa order; total/sisa dihitung dari order-ordernya */
@@ -96,6 +100,7 @@ export type Pelanggan = {
    Barang biasa: qty = jumlah stok. Harga beli/jual per satuan (mis. per meter). */
 export type Stok = {
   id: string; nama: string; kategori: string; satuan: string; qty: number; min: number; hargaBeli: number | null; hargaJual: number;
+  hargaMitra?: number; // harga untuk teknisi luar / toko / subdealer (kosong = sama dengan harga jual)
   roll?: boolean; panjangRoll?: number; rolls?: number[];
 };
 export type Mutasi = { id: string; createdAt: number; tanggal: string; itemId: string; nama: string; jenis: 'Masuk' | 'Keluar' | 'Kembali' | 'Koreksi' | 'Buka roll'; qty: number | string; ket: string };

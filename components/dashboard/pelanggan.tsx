@@ -82,10 +82,10 @@ function PerluDihubungi() {
 
 type Filter = 'Semua' | 'Perorangan' | 'Instansi' | 'Dihubungi' | 'Baru' | 'Teknisi';
 
-export function PelangganView() {
+export function PelangganView({ awal = 'Semua' }: { awal?: Filter }) {
   const { d, open } = useDash();
   const [q, setQ] = useState('');
-  const [f, setF] = useState<Filter>('Semua');
+  const [f, setF] = useState<Filter>(awal);
   const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
   const nBaru = d.pelanggan.filter(p => p.baru).length;
   const nTek = d.pelanggan.filter(p => p.cekTeknisi).length;

@@ -17,7 +17,7 @@ import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, specUnit } from '@/lib
 import { hargaOtomatis, JENIS_HARGA, TARIF_KOSONG, type PaketAC, type Tarif, type TarifLayanan } from '@/lib/tarif';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
-  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, MODEL_INVOICE, type AllData, type Order, type OrderInput, type OrderItem, type PaketOrder, type Part, type Result, type ResultOf, type Me, type Peran,
+  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, MODEL_INVOICE, PEMBELI, type Pembeli, type AllData, type Order, type OrderInput, type OrderItem, type PaketOrder, type Part, type Result, type ResultOf, type Me, type Peran,
   type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO, type Rekap,
   type Pengingat, HASIL_PENGINGAT, TIPE_LOKASI, type RiwayatUnit, type Stiker, type StatusStiker,
   type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
@@ -97,7 +97,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       const pids = new Set(o.map(x => x.pelangganId).filter(Boolean));
       pl = pl.filter(x => pids.has(x.id)).map(x => ({ ...x, tempoHari: 0, catatan: '', pengingat: undefined }));
       /* untuk laporan teknisi: nama layanan & barang stok saja, tanpa harga */
-      s = s.map(x => ({ ...x, hargaBeli: null, hargaJual: 0 }));
+      s = s.map(x => ({ ...x, hargaBeli: null, hargaJual: 0, hargaMitra: 0 }));
       /* teknisi: hanya nama layanan (tanpa harga & paket) untuk "tambah pekerjaan di lokasi" */
       tarif = { layanan: tarif.layanan.map(l => ({ id: l.id, nama: l.nama, jenis: l.jenis })), paket: [], infoPaket: {} };
       st = { nama: st.nama, jamMasuk: st.jamMasuk, jamMasukMinggu: st.jamMasukMinggu, layanan: tarif.layanan.map(l => ({ nama: l.nama, harga: 0 })) };
@@ -359,6 +359,68 @@ export async function tambahPembayaran(id: string, v: { tanggal: string; jumlah:
 /* hapus catatan pembayaran (salah input) — khusus pemilik */
 export async function hapusPembayaran(id: string, pid: string): Promise<Result> {
   return run('owner', async () => { await ubahPembayaran(id, p => p.filter(x => x.id !== pid)); });
+}
+
+/* ---------------- penjualan langsung (sparepart / unit AC tanpa jasa) — pemilik & admin ---------------- */
+export type PenjualanInput = {
+  tanggal: string; pembeli: Pembeli; nama: string; hp: string; ket: string; diskon: number;
+  barang: { itemId: string; qty: number; harga: number }[];
+  bayar: Metode | 'Bon'; // Bon = belum dibayar (masuk piutang)
+};
+/* Disimpan sebagai order berstatus Selesai (jual), jadi stok, invoice/nota, piutang & omzet ikut otomatis. */
+export async function simpanPenjualan(id: string | null, v: PenjualanInput): Promise<ResultOf<{ id: string }>> {
+  return guarded('admin', async me => {
+    const tanggal = str(v.tanggal, 10);
+    if (!isDate(tanggal)) throw new UserError('Tanggal tidak valid.');
+    const pembeli: Pembeli = v.pembeli in PEMBELI ? v.pembeli : 'konsumen';
+    const nama = str(v.nama, 120), hp = str(v.hp, 30);
+    const bon = v.bayar === 'Bon';
+    if (bon && (!nama || !normalHp(hp))) throw new UserError('Penjualan bon wajib diisi nama & nomor HP pembeli supaya bisa ditagih.');
+    const raw = (v.barang || []).slice(0, 50)
+      .map(b => ({ itemId: str(b.itemId, 64), qty: r3(Math.max(0, num(b.qty))), harga: Math.max(0, num(b.harga)) }))
+      .filter(b => b.itemId && b.qty > 0);
+    if (!raw.length) throw new UserError('Pilih minimal satu barang.');
+    const db = adminDb();
+    const ref = id ? db.doc('orders/' + str(id, 64)) : db.collection('orders').doc();
+    await db.runTransaction(async tx => {
+      const oldSnap = id ? await tx.get(ref) : null;
+      if (id && !oldSnap?.exists) throw new UserError('Penjualan tidak ditemukan.');
+      const old = oldSnap ? normOrder({ id: oldSnap.id, ...oldSnap.data() }) : null;
+      if (old && !old.jual) throw new UserError('Data ini bukan penjualan langsung.');
+      const stokSnaps = await readStok(tx, [...raw.map(b => b.itemId), ...idStok(old)]);
+      const counterRef = db.doc(`counters/inv-${tanggal.slice(0, 7)}`);
+      const counter = old ? null : await tx.get(counterRef);
+      /* nomor HP cocok dengan pelanggan terdaftar → tersambung ke data pelanggan */
+      const q = normalHp(hp) ? await tx.get(db.collection('pelanggan').where('hpNorm', '==', normalHp(hp)).limit(1)) : null;
+      const parts: Part[] = raw.map(b => {
+        const s = stokSnaps.get(b.itemId);
+        if (!s?.exists) throw new UserError('Ada barang yang sudah dihapus dari stok. Muat ulang halaman.');
+        return { ...b, nama: s.get('nama') || '', satuan: s.get('satuan') || '' };
+      });
+      const diskon = Math.max(0, num(v.diskon));
+      const total = hitungTotal([], parts, diskon);
+      let pembayaran: Pembayaran[] = old ? old.pembayaran : [];
+      if (!old && !bon && total > 0) {
+        const metode = METODE.includes(v.bayar as Metode) ? (v.bayar as Metode) : 'Tunai';
+        pembayaran = [{ id: 'p' + Date.now().toString(36), tanggal, jumlah: total, metode, ket: 'Bayar langsung', oleh: me.nama, at: Date.now() }];
+      }
+      const dibayar = jumlahBayar(pembayaran), bayar = statusBayar(total, dibayar);
+      const next = old ? 0 : (counter?.get('n') || 0) + 1;
+      const doc: Omit<Order, 'id'> = {
+        tanggal, jam: old?.jam || nowTimeWIB(), pelangganId: q && !q.empty ? q.docs[0].id : '', pelanggan: nama || (pembeli === 'mitra' ? 'Mitra' : 'Konsumen umum'), hp, alamat: '',
+        teknisi: [], items: [], parts, diskon, total, status: 'Selesai', ket: str(v.ket, 500),
+        pembayaran, dibayar, bayar, jatuhTempo: old ? old.jatuhTempo : '',
+        foto: [], catatanTeknisi: '', rekapId: '', belumDitagih: false, tglInvoice: old?.tglInvoice || tanggal, inv: old?.inv || {},
+        jual: { pembeli },
+        invoice: old?.invoice || `INV/${tanggal.slice(0, 4)}/${tanggal.slice(5, 7)}/${String(next).padStart(4, '0')}`,
+        createdAt: old?.createdAt || Date.now(), updatedAt: Date.now(), paidAt: bayar === 'Lunas' ? old?.paidAt || tanggal : null,
+      };
+      if (next) tx.set(counterRef, { n: next });
+      tx.set(ref, { ...doc, fotoIds: [] });
+      applyStock(tx, stokSnaps, old, { id: ref.id, ...doc });
+    });
+    return { id: ref.id };
+  });
 }
 
 /* ---------------- daftar harga (layanan & paket AC baru) — pemilik & admin ---------------- */
@@ -946,7 +1008,7 @@ export async function fotoNameplate(v: { orderId?: string; pelangganId: string; 
 /* ---------------- stok (harga beli hanya bisa diubah pemilik) ---------------- */
 /* Barang roll (pipa AC, kabel, …): rolls = panjang tiap roll utuh, qty = sisa eceran. Barang biasa: qty = jumlah stok. */
 type StokInput = {
-  nama: string; kategori: string; satuan: string; min: number; hargaBeli: number | null; hargaJual: number; qty?: number;
+  nama: string; kategori: string; satuan: string; min: number; hargaBeli: number | null; hargaJual: number; hargaMitra?: number; qty?: number;
   roll?: boolean; panjangRoll?: number; rolls?: number[];
 };
 const cleanRolls = (rolls: unknown) => (Array.isArray(rolls) ? rolls : []).slice(0, 200).map(x => r3(num(x))).filter(x => x > 0);
@@ -959,7 +1021,7 @@ export async function saveStok(id: string | null, v: StokInput): Promise<Result>
     if (!nama) throw new UserError('Nama barang wajib diisi.');
     const roll = !!v.roll;
     const doc: Record<string, unknown> = {
-      nama, kategori: str(v.kategori, 40), satuan: str(v.satuan, 20), min: Math.max(0, num(v.min)), hargaJual: Math.max(0, num(v.hargaJual)),
+      nama, kategori: str(v.kategori, 40), satuan: str(v.satuan, 20), min: Math.max(0, num(v.min)), hargaJual: Math.max(0, num(v.hargaJual)), hargaMitra: Math.max(0, num(v.hargaMitra)),
       roll, panjangRoll: roll ? Math.max(0, r3(num(v.panjangRoll))) || 30 : null,
     };
     if (me.peran === 'owner') doc.hargaBeli = Math.max(0, num(v.hargaBeli));

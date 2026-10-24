@@ -1,162 +1,134 @@
 'use client';
 import { Button } from '@/components/ui/button';
 import { ringkasRoll, totalStok } from '@/lib/stok';
-import { absToday, activeKar, dueNotes, isLow, omzetOrders, STATUS_CLS, unpaid } from '@/lib/derive';
-import { addDays, fmtD, monthKey, rp, short } from '@/lib/format';
+import { absToday, activeKar, dueNotes, isLow, STATUS_CLS } from '@/lib/derive';
+import { fmtD, monthKey, rp } from '@/lib/format';
 import { ringkasItems, sisa, telatBayar, umurPiutang } from '@/lib/order';
-import type { AllData } from '@/lib/types';
+import { jamMasukTgl } from '@/lib/types';
+import { StatusPill, telatMenit } from './absensi';
 import { useDash, type Tab } from './ctx';
 import { namaTeknisi } from './order';
 import { perluDiingatkan } from './pelanggan';
+import { jenisOrder, type JenisOrder } from './penjualan';
 
-function Kpi({ lab, val, note, alert }: { lab: string; val: React.ReactNode; note: string; alert?: boolean }) {
+function Kpi({ lab, val, note, alert, onClick }: { lab: string; val: React.ReactNode; note: React.ReactNode; alert?: boolean; onClick?: () => void }) {
   return (
-    <div className={`kpi${alert ? ' alert' : ''}`}>
+    <div role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} className={`kpi${alert ? ' alert' : ''}`} onClick={onClick}
+      onKeyDown={e => { if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); } }} style={{ cursor: onClick ? 'pointer' : 'default' }}>
       <span className="lab">{lab}</span><span className="val">{val}</span><span className="note">{note}</span>
     </div>
   );
 }
 
+/* Dashboard: angka & daftar yang langsung terbaca — omzet, piutang, kehadiran, jadwal hari ini, dan yang perlu diurus. */
 export function Ringkasan() {
   const { d, go, open } = useDash();
   const t = d.today, m = t.slice(0, 7);
   const owner = d.me.peran === 'owner'; // omzet hanya untuk pemilik
-  const om = omzetOrders(d);
-  const omToday = om.filter(o => o.tanggal === t);
-  const omMonth = om.filter(o => monthKey(o.tanggal) === m);
+  const selesai = d.orders.filter(o => o.status === 'Selesai');
   const sum = (arr: { total: number }[]) => arr.reduce((a, o) => a + (+o.total || 0), 0);
-  const jobsToday = d.orders.filter(o => o.tanggal === t && o.status !== 'Batal').sort((a, b) => (a.jam || '99').localeCompare(b.jam || '99'));
-  const up = unpaid(d);
-  const sisaSum = up.reduce((a, o) => a + sisa(o), 0);
-  const lewatTempo = d.orders.filter(o => telatBayar(o, t));
-  const low = d.stok.filter(isLow);
-  const recs = absToday(d), kar = activeKar(d);
-  const hadir = kar.filter(k => recs[k.id]?.status === 'Hadir').length;
-  const resched = d.orders.filter(o => o.status === 'Jadwal ulang');
-  /* pekerjaan instansi yang sudah selesai tapi belum ditagih (invoice belum diterbitkan / belum masuk rekap) */
-  const belumRekap = new Map<string, { nama: string; n: number }>();
-  d.orders.filter(o => o.belumDitagih && o.status === 'Selesai' && !o.rekapId)
-    .forEach(o => { const x = belumRekap.get(o.pelangganId) || { nama: o.pelanggan, n: 0 }; x.n++; belumRekap.set(o.pelangganId, x); });
-  const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
-  const nBaru = d.pelanggan.filter(p => p.baru).length;
+  const hariIni = selesai.filter(o => o.tanggal === t), bulanIni = selesai.filter(o => monthKey(o.tanggal) === m);
+  const perJenis = (jenis: JenisOrder) => sum(bulanIni.filter(o => jenisOrder(d, o) === jenis));
 
-  const attention: { k: string; t: string; m: string; go: Tab }[] = [
-    ...[...belumRekap.values()].map(x => ({ k: 'warn', t: `Belum ditagih: ${x.nama}`, m: `${x.n} pekerjaan selesai belum diterbitkan invoice-nya`, go: 'invoice' as Tab })),
-    ...(nIngat ? [{ k: 'warn', t: `Perlu dihubungi: ${nIngat} konsumen`, m: 'Unit AC-nya sudah waktunya dicuci — kirim pengingat WhatsApp', go: 'pelanggan' as Tab }] : []),
-    ...(nBaru ? [{ k: 'brand', t: `${nBaru} konsumen baru dari form daftar`, m: 'Cek & lengkapi datanya di tab Pelanggan', go: 'pelanggan' as Tab }] : []),
-    ...dueNotes(d).map(n => ({ k: n.tanggal < t ? 'bad' : 'warn', t: `${n.tanggal < t ? 'Terlambat' : 'Hari ini'}: ${n.judul}`, m: n.tipe, go: 'catatan' as Tab })),
-    ...resched.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${ringkasItems(o.items)} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
+  const jadwal = d.orders.filter(o => o.tanggal === t && o.status !== 'Batal' && !o.jual).sort((a, b) => (a.jam || '99').localeCompare(b.jam || '99'));
+  const piutang = d.orders.filter(o => o.status !== 'Batal' && !o.belumDitagih && o.bayar !== 'Lunas');
+  const lewatTempo = piutang.filter(o => telatBayar(o, t));
+  const belumTagih = d.orders.filter(o => o.belumDitagih && o.status === 'Selesai' && !o.rekapId);
+  const kar = activeKar(d), recs = absToday(d), jm = jamMasukTgl(d.settings, t);
+  const hadir = kar.filter(k => recs[k.id]?.status === 'Hadir');
+  const telat = hadir.filter(k => telatMenit(recs[k.id], jm) > 0).length;
+  const low = d.stok.filter(isLow);
+  const nIngat = d.pelanggan.filter(p => perluDiingatkan(d, p)).length;
+  const nBaru = d.pelanggan.filter(p => p.baru).length, nTek = d.pelanggan.filter(p => p.cekTeknisi).length;
+  const tanpaHarga = d.orders.filter(o => o.status !== 'Batal' && o.items.some(i => i.perluHarga));
+  const jadwalUlang = d.orders.filter(o => o.status === 'Jadwal ulang');
+
+  const perhatian: { k: string; t: string; m: string; go: Tab }[] = [
     ...lewatTempo.map(o => ({ k: 'bad', t: `Lewat jatuh tempo: ${o.pelanggan}`, m: `${o.invoice} · sisa ${rp(sisa(o))} · tempo ${fmtD(o.jatuhTempo)} (${umurPiutang(o, t)} hari sejak invoice)`, go: 'invoice' as Tab })),
+    ...(belumTagih.length ? [{ k: 'warn', t: `${belumTagih.length} pekerjaan instansi belum ditagih`, m: [...new Set(belumTagih.map(o => o.pelanggan))].join(', '), go: 'invoice' as Tab }] : []),
+    ...tanpaHarga.map(o => ({ k: 'warn', t: `Harga belum diisi: ${o.pelanggan}`, m: `${fmtD(o.tanggal)} · ${ringkasItems(o.items.filter(i => i.perluHarga))}`, go: 'order' as Tab })),
+    ...(nIngat ? [{ k: 'warn', t: `Pengingat servis: ${nIngat} pelanggan`, m: 'Unit AC-nya sudah waktunya dicuci — kirim pengingat WhatsApp', go: 'pengingat' as Tab }] : []),
+    ...(nBaru ? [{ k: 'brand', t: `${nBaru} pelanggan baru dari form daftar`, m: 'Cek & lengkapi datanya', go: 'pelanggan' as Tab }] : []),
+    ...(nTek ? [{ k: 'brand', t: `${nTek} pelanggan: data unit baru dari teknisi`, m: 'Cek data unit AC yang dicatat di lapangan', go: 'pelanggan' as Tab }] : []),
+    ...dueNotes(d).map(n => ({ k: n.tanggal < t ? 'bad' : 'warn', t: `${n.tanggal < t ? 'Terlambat' : 'Hari ini'}: ${n.judul}`, m: n.tipe, go: 'catatan' as Tab })),
+    ...jadwalUlang.map(o => ({ k: 'warn', t: `Jadwal ulang: ${o.pelanggan}`, m: `${ringkasItems(o.items)} · semula ${fmtD(o.tanggal)}`, go: 'order' as Tab })),
     ...low.map(s => ({ k: totalStok(s) <= 0 ? 'bad' : 'warn', t: `Stok ${totalStok(s) <= 0 ? 'habis' : 'menipis'}: ${s.nama}`, m: `Sisa ${s.roll ? ringkasRoll(s) : `${totalStok(s)} ${s.satuan || ''}`} · minimum ${+s.min || 0}`, go: 'stok' as Tab })),
   ];
-
-  const svcCount: Record<string, number> = {};
-  omMonth.forEach(o => o.items.forEach(i => (svcCount[i.layanan] = (svcCount[i.layanan] || 0) + (+i.qty || 1))));
-  const svcTop = Object.entries(svcCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
   return (
     <>
       <div className="section-head">
-        <div><h2>Ringkasan hari ini</h2>{owner && <p>Omzet dihitung dari order berstatus Selesai.</p>}</div>
+        <div><h2>Dashboard</h2><p>Ringkasan hari ini. Klik kotak atau baris untuk membuka detailnya.</p></div>
         <div className="actions">
           <Button onClick={() => open({ kind: 'order' })}>+ Order baru</Button>
-          <Button variant="outline" onClick={() => open({ kind: 'note' })}>+ Catatan</Button>
+          <Button variant="outline" onClick={() => open({ kind: 'jual', jenis: 'sparepart' })}>+ Penjualan langsung</Button>
+          <Button variant="outline" nativeButton={false} render={<a href="/layar-absen" target="_blank" rel="noopener" />}>Layar Absen</Button>
         </div>
       </div>
+
       <div className="kpis">
-        {owner && <Kpi lab="Omzet hari ini" val={rp(sum(omToday))} note={`${omToday.length} order selesai`} />}
-        {owner && <Kpi lab="Omzet bulan ini" val={rp(sum(omMonth))} note={`${omMonth.length} order selesai`} />}
-        <Kpi lab="Jadwal hari ini" val={jobsToday.length} note={`${jobsToday.filter(o => o.status === 'Selesai').length} sudah selesai`} />
-        <Kpi lab="Belum dibayar" val={rp(sisaSum)} note={`${up.length} invoice${lewatTempo.length ? ` · ${lewatTempo.length} lewat tempo` : ''}`} alert={up.length > 0} />
-        <Kpi lab="Stok menipis" val={low.length} note={low.length ? 'perlu belanja' : 'stok aman'} alert={low.length > 0} />
-        <Kpi lab="Hadir hari ini" val={`${hadir}/${kar.length}`} note={kar.length ? 'karyawan aktif' : 'belum ada karyawan'} />
+        {owner && <Kpi lab="Omzet hari ini" val={rp(sum(hariIni))} note={`${hariIni.length} transaksi selesai`} onClick={() => go('order')} />}
+        {owner && <Kpi lab="Omzet bulan ini" val={rp(sum(bulanIni))}
+          note={<>Jasa {rp(perJenis('jasa'))} · Unit AC {rp(perJenis('unit'))} · Sparepart {rp(perJenis('sparepart'))}</>} onClick={() => go('jasa')} />}
+        <Kpi lab="Piutang" val={rp(piutang.reduce((a, o) => a + sisa(o), 0))} alert={lewatTempo.length > 0} onClick={() => go('invoice')}
+          note={`${piutang.length} invoice${lewatTempo.length ? ` · ${lewatTempo.length} lewat tempo` : ''}${belumTagih.length ? ` · ${belumTagih.length} belum ditagih` : ''}`} />
+        <Kpi lab="Karyawan hadir" val={`${hadir.length} / ${kar.length}`} alert={telat > 0} onClick={() => go('absensi')}
+          note={kar.length ? `${telat ? `${telat} telat · ` : ''}jam masuk ${jm}` : 'belum ada karyawan'} />
       </div>
+
       <div className="cols">
         <div className="stack">
           <div className="panel">
-            <h3>Jadwal kunjungan hari ini <button className="linkbtn" onClick={() => go('order')}>Semua order</button></h3>
-            {jobsToday.length ? (
+            <h3>Jadwal hari ini · {jadwal.length} <button className="linkbtn" onClick={() => go('order')}>Semua order</button></h3>
+            {jadwal.length ? (
               <ul className="list">
-                {jobsToday.map(o => (
-                  <li key={o.id}>
+                {jadwal.map(o => (
+                  <li key={o.id} style={{ cursor: 'pointer' }} onClick={() => open({ kind: 'order', id: o.id })}>
                     <span className="time">{o.jam || '—'}</span>
                     <div className="main">
                       <b>{o.pelanggan}</b> · {ringkasItems(o.items)}
-                      <div className="meta">{o.alamat}{o.teknisi.length ? ' · Teknisi: ' + namaTeknisi(d, o.teknisi) : ''}</div>
+                      <div className="meta">{o.alamat}{o.teknisi.length ? ' · Teknisi: ' + namaTeknisi(d, o.teknisi) : ' · belum ada teknisi'}</div>
                     </div>
                     <span className={`pill ${STATUS_CLS[o.status] || ''}`}>{o.status}</span>
                   </li>
                 ))}
               </ul>
-            ) : (
-              <div className="empty"><b>Belum ada jadwal hari ini</b>Tambahkan order baru dari tombol di atas.</div>
-            )}
+            ) : <div className="empty"><b>Belum ada jadwal hari ini</b>Tambahkan lewat “+ Order baru”.</div>}
           </div>
-          {owner && <div className="panel chart"><h3>Omzet 14 hari terakhir</h3><Chart14 d={d} /></div>}
+          <div className="panel">
+            <h3>Absensi hari ini <button className="linkbtn" onClick={() => go('absensi')}>Detail</button></h3>
+            {kar.length ? (
+              <ul className="list">
+                {kar.map(k => {
+                  const r = recs[k.id];
+                  return (
+                    <li key={k.id}>
+                      <div className="main"><b>{k.nama}</b><div className="meta">{k.peran}</div></div>
+                      <span className="num sm" style={{ minWidth: 92, textAlign: 'right' }}>{r?.masuk ? `masuk ${r.masuk}` : ''}{r?.pulang ? ` · pulang ${r.pulang}` : ''}</span>
+                      <StatusPill r={r} k={k} tgl={t} jamMasuk={jm} />
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : <div className="empty">Belum ada data karyawan.</div>}
+          </div>
         </div>
         <div className="stack">
           <div className="panel">
-            <h3>Perlu perhatian</h3>
-            {attention.length ? (
+            <h3>Perlu diurus · {perhatian.length}</h3>
+            {perhatian.length ? (
               <ul className="list">
-                {attention.slice(0, 12).map((x, i) => (
-                  <li key={i}>
+                {perhatian.slice(0, 20).map((x, i) => (
+                  <li key={i} style={{ cursor: 'pointer' }} onClick={() => go(x.go)}>
                     <span className={`pill ${x.k}`}>!</span>
                     <div className="main"><b>{x.t}</b><div className="meta">{x.m}</div></div>
-                    <button className="linkbtn" onClick={() => go(x.go)}>Buka</button>
                   </li>
                 ))}
               </ul>
-            ) : (
-              <div className="empty"><b>Semua aman</b>Tidak ada stok menipis, pengingat jatuh tempo, atau jadwal ulang.</div>
-            )}
-          </div>
-          <div className="panel">
-            <h3>Layanan terbanyak bulan ini</h3>
-            {svcTop.length ? (
-              <ul className="list">
-                {svcTop.map(([n, c]) => (<li key={n}><div className="main"><b>{n}</b></div><span className="num">{c} unit</span></li>))}
-              </ul>
-            ) : (
-              <div className="empty">Belum ada order selesai bulan ini.</div>
-            )}
+            ) : <div className="empty"><b>Semua aman</b>Tidak ada tagihan lewat tempo, stok menipis, atau pekerjaan tertunda.</div>}
           </div>
         </div>
       </div>
     </>
-  );
-}
-
-function Chart14({ d }: { d: AllData }) {
-  const t = d.today;
-  const days = [...Array(14)].map((_, i) => addDays(t, i - 13));
-  const om = omzetOrders(d);
-  const sums = days.map(day => om.filter(o => o.tanggal === day).reduce((a, o) => a + (+o.total || 0), 0));
-  const max = Math.max(...sums, 0);
-  const step = max <= 0 ? 100000 : Math.pow(10, Math.floor(Math.log10(max / 3)));
-  const nice = [1, 2, 5, 10].map(x => x * step).find(s => s * 3 >= max) || step * 10;
-  const top = nice * 3, W = 560, H = 200, L = 44, B = 24, T = 10, cw = (W - L - 6) / 14;
-  const y = (v: number) => T + (H - T - B) * (1 - v / top);
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Grafik omzet 14 hari">
-      {[0, 1, 2, 3].map(i => (
-        <g key={i}>
-          <line className="grid" x1={L} x2={W - 4} y1={y(nice * i)} y2={y(nice * i)} />
-          <text x={L - 6} y={y(nice * i) + 3} textAnchor="end">{short(nice * i)}</text>
-        </g>
-      ))}
-      {days.map((day, i) => {
-        const h = Math.max(sums[i] > 0 ? 2 : 0, H - T - B - (y(sums[i]) - T));
-        const x = L + i * cw + cw * 0.18;
-        return (
-          <g key={day}>
-            <rect className={`bar${day === t ? ' today' : ''}`} x={x} y={H - B - h} width={cw * 0.64} height={h} rx={2}>
-              <title>{`${fmtD(day)}: ${rp(sums[i])}`}</title>
-            </rect>
-            <text x={x + cw * 0.32} y={H - 8} textAnchor="middle">{+day.slice(8)}</text>
-          </g>
-        );
-      })}
-    </svg>
   );
 }

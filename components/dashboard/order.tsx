@@ -61,19 +61,20 @@ function JadwalSaya() {
   );
 }
 
-export function OrderView() {
+export function OrderView({ jenis }: { jenis?: 'jasa' }) {
   const { d } = useDash();
-  return d.me.peran === 'karyawan' ? <JadwalSaya /> : <OrderTable />;
+  return d.me.peran === 'karyawan' ? <JadwalSaya /> : <OrderTable key={jenis || 'semua'} jenis={jenis} />;
 }
 
-function OrderTable() {
+function OrderTable({ jenis }: { jenis?: 'jasa' }) {
   const { d, open, run, go } = useDash();
   const [period, setPeriod] = useState<Period>('bulan');
   const [status, setStatus] = useState<'Semua' | Status>('Semua');
   const [q, setQ] = useState('');
 
   const t = d.today;
-  let list = d.orders.slice();
+  /* penjualan langsung tidak termasuk jadwal; menu Jasa Service AC hanya order service (tanpa paket AC baru) */
+  let list = d.orders.filter(o => !o.jual && (!jenis || !o.items.some(i => i.paket)));
   if (period === 'hari') list = list.filter(o => o.tanggal === t);
   else if (period === 'minggu') list = list.filter(o => o.tanggal >= addDays(t, -6) && o.tanggal <= addDays(t, 7));
   else if (period === 'bulan') list = list.filter(o => monthKey(o.tanggal) === t.slice(0, 7));
@@ -86,7 +87,7 @@ function OrderTable() {
   return (
     <>
       <div className="section-head">
-        <div><h2>Order &amp; Penjualan</h2><p>Setiap kunjungan service dicatat di sini. Sparepart yang dipakai otomatis mengurangi stok.</p></div>
+        <div><h2>{jenis ? 'Jasa Service AC' : 'Jadwal & Order'}</h2><p>{jenis ? 'Order bersihkan, cuci besar, pasang, bongkar pasang, dan service lainnya.' : 'Semua kunjungan & order teknisi. Sparepart yang dipakai otomatis mengurangi stok.'}</p></div>
         <div className="actions"><Button onClick={() => open({ kind: 'order' })}>+ Order baru</Button></div>
       </div>
       <div className="toolbar">
