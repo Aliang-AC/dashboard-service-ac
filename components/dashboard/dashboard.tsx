@@ -7,10 +7,10 @@ import {
   Bell, Building2, History, CalendarDays, Clock, LayoutDashboard, MenuIcon, NotebookPen, Package, QrCode, Receipt, RefreshCwIcon, Settings,
   Snowflake, Tag, Users, Warehouse, Wrench, type LucideIcon,
 } from 'lucide-react';
-import { loadAll, versiData } from '@/app/actions';
+import { ambilOrder, loadAll, versiData } from '@/app/actions';
 import { Button } from '@/components/ui/button';
 import { dueNotes, isLow } from '@/lib/derive';
-import type { AllData, Result } from '@/lib/types';
+import type { AllData, Order, Result } from '@/lib/types';
 import { DashCtx, type Ctx, type Modal, type Tab } from './ctx';
 import { Ringkasan } from './ringkasan';
 import { OrderView, OrderDialog } from './order';
@@ -92,11 +92,27 @@ export function Dashboard() {
   /* Hemat database: tiap 15 detik (dan saat aplikasi dibuka lagi) hanya mengecek penanda versi data yang kecil;
      semua data baru dimuat ulang kalau ada perubahan dari orang lain. */
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
-  const { data: d, error, mutate, isValidating } = useSWR('all', fetchAll, {
+  const { data: dMuat, error, mutate, isValidating } = useSWR('all', fetchAll, {
     refreshInterval: 0, revalidateOnFocus: false, keepPreviousData: true, onSuccess: () => setUpdatedAt(new Date()),
   });
   const { data: versi } = useSWR('versi', versiData, { refreshInterval: 15000, revalidateOnFocus: true, dedupingInterval: 4000 });
-  useEffect(() => { if (versi && d && versi !== d.versi) mutate(); }, [versi, d, mutate]);
+  useEffect(() => { if (versi && dMuat && versi !== dMuat.versi) mutate(); }, [versi, dMuat, mutate]);
+  /* order lama hasil "Cari order lama": digabung ke data, dan diambil ulang tiap data berubah supaya tetap segar */
+  const [lama, setLama] = useState<Order[]>([]);
+  const tambahOrder = useCallback((os: Order[]) => setLama(xs => [...xs.filter(x => !os.some(y => y.id === x.id)), ...os]), []);
+  const versiMuat = dMuat?.versi;
+  useEffect(() => {
+    if (!versiMuat || !lama.length) return;
+    let batal = false;
+    ambilOrder(lama.map(x => x.id)).then(r => { if (!batal && r.ok) setLama(r.data); });
+    return () => { batal = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versiMuat]);
+  const d = useMemo(() => {
+    if (!dMuat || !lama.length) return dMuat;
+    const ada = new Set(dMuat.orders.map(o => o.id));
+    return { ...dMuat, orders: [...dMuat.orders, ...lama.filter(o => !ada.has(o.id))] };
+  }, [dMuat, lama]);
   const [rawTab, setTab] = useState<Tab>(() => {
     try { const t = localStorage.getItem('sac-tab') as Tab | null; if (t && SEMUA_TAB.includes(t)) return t; } catch {}
     return 'ringkasan';
@@ -127,7 +143,7 @@ export function Dashboard() {
     return true;
   }, [mutate]);
 
-  const ctx = useMemo<Ctx | null>(() => (d ? { d, run, go, open: setModal, invSel, setInvSel } : null), [d, run, go, invSel]);
+  const ctx = useMemo<Ctx | null>(() => (d ? { d, run, go, open: setModal, invSel, setInvSel, tambahOrder } : null), [d, run, go, invSel, tambahOrder]);
   const badges = d ? badgeMenu(d) : {};
   const close = () => setModal(null);
 

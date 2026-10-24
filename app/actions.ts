@@ -172,7 +172,14 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     const arsipId = me.peran === 'owner' ? (await db.doc('settings/arsip').get()).get('absensiSheetId') : null;
     const backupL = me.peran === 'owner' ? await db.doc('settings/backupLengkap').get() : null;
 
-    let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
+    /* order lama yang masih perlu diurus (belum lunas / belum ditagih) tetap ikut, supaya piutang selalu lengkap */
+    const [blmLunas, blmTagih] = staff ? await Promise.all([
+      db.collection('orders').where('bayar', 'in', ['Belum dibayar', 'Sebagian']).get(),
+      db.collection('orders').where('belumDitagih', '==', true).get(),
+    ]) : [null, null];
+    const sudah = new Set(orders.docs.map(x => x.id));
+    const tambahan = [...(blmLunas?.docs || []), ...(blmTagih?.docs || [])].filter(x => !sudah.has(x.id) && (sudah.add(x.id), true));
+    let o = [...orders.docs, ...tambahan].map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
     let a = docs<Absensi>(absensi), c = docs<Catatan>(catatan), pl = docs<Pelanggan>(pelanggan);
     let st = (settings.data() as Settings) || {};
     let tarif = bacaTarif(tarifSnap.data());
@@ -1765,6 +1772,52 @@ export async function saveTemplateAjak(teks: string): Promise<Result> {
     if (t && !t.includes('{link}')) throw new UserError('Pesan harus memuat {link} supaya link form ikut terkirim.');
     await adminDb().doc('settings/usaha').set({ templateAjakForm: t }, { merge: true });
   });
+}
+
+/* ---------------- cari order lama (lebih tua dari yang dimuat dashboard) ---------------- */
+const MAKS_CARI = 100;
+const urutBaru = (os: Order[]) => os.sort((a, b) => (b.tanggal + (b.jam || '')).localeCompare(a.tanggal + (a.jam || '')));
+
+/* cari berdasarkan nomor invoice, nomor HP, atau nama pelanggan */
+export async function cariOrderLama(q: string): Promise<ResultOf<Order[]>> {
+  return guarded('admin', async () => {
+    const kata = str(q, 80);
+    if (kata.length < 3) throw new UserError('Ketik minimal 3 huruf / angka.');
+    const db = adminDb();
+    const hasil = new Map<string, Order>();
+    const masuk = (snap: FirebaseFirestore.QuerySnapshot) => snap.docs.forEach(d => hasil.set(d.id, normOrder({ id: d.id, ...d.data() })));
+    /* nomor invoice (persis) */
+    if (/^inv/i.test(kata)) masuk(await db.collection('orders').where('invoice', '==', kata.toUpperCase().replace(/\s+/g, '')).get());
+    /* pelanggan: nomor HP atau nama */
+    const hp = normalHp(kata);
+    const pel = (await db.collection('pelanggan').get()).docs
+      .filter(p => (hp && p.get('hpNorm') === hp) || String(p.get('nama') || '').toLowerCase().includes(kata.toLowerCase()))
+      .slice(0, 15);
+    for (const p of pel) masuk(await db.collection('orders').where('pelangganId', '==', p.id).get());
+    /* order tanpa data pelanggan: cocokkan nomor HP / nama persis seperti yang tercatat di order */
+    if (hp && !pel.length) masuk(await db.collection('orders').where('hp', '==', kata).get());
+    if (!pel.length && !hp) masuk(await db.collection('orders').where('pelanggan', '==', kata).get());
+    return urutBaru([...hasil.values()]).slice(0, MAKS_CARI);
+  }, true);
+}
+
+/* semua order satu pelanggan (untuk riwayat lengkap di data pelanggan) */
+export async function orderPelangganLengkap(pelangganId: string): Promise<ResultOf<Order[]>> {
+  return guarded('admin', async () => {
+    const s = await adminDb().collection('orders').where('pelangganId', '==', str(pelangganId, 64)).get();
+    return urutBaru(s.docs.map(d => normOrder({ id: d.id, ...d.data() }))).slice(0, 500);
+  }, true);
+}
+
+/* ambil ulang order tertentu (supaya order lama yang sedang dibuka ikut segar setelah diubah) */
+export async function ambilOrder(ids: string[]): Promise<ResultOf<Order[]>> {
+  return guarded('admin', async () => {
+    const db = adminDb();
+    const daftar = [...new Set((ids || []).map(x => str(x, 64)).filter(Boolean))].slice(0, 300);
+    if (!daftar.length) return [];
+    const snaps = await db.getAll(...daftar.map(id => db.doc('orders/' + id)));
+    return snaps.filter(x => x.exists).map(x => normOrder({ id: x.id, ...x.data() }));
+  }, true);
 }
 
 /* versi data terakhir — dicek dashboard tiap 15 detik (1 pembacaan kecil) */

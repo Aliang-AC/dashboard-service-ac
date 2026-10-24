@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { catatPengingat, hapusPelanggan, savePelanggan } from '@/app/actions';
+import { catatPengingat, hapusPelanggan, orderPelangganLengkap, savePelanggan } from '@/app/actions';
 import { STATUS_CLS } from '@/lib/derive';
 import { fmtD, fmtLong, rp, waNumber } from '@/lib/format';
 import { ringkasItems, sisa } from '@/lib/order';
@@ -145,7 +145,8 @@ export function PelangganView({ awal = 'Semua' }: { awal?: Filter }) {
 }
 
 export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => void }) {
-  const { d, run, open, go } = useDash();
+  const { d, run, open, go, tambahOrder } = useDash();
+  const [muatLama, setMuatLama] = useState(false);
   const p = id ? d.pelanggan.find(x => x.id === id) : undefined;
   const [jenis, setJenis] = useState<Pelanggan['jenis']>(p?.jenis || 'Perorangan');
   const [units, setUnits] = useState<UnitRow[]>(() => keUnitRows(p?.units || []));
@@ -258,10 +259,18 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
             <Button type="button" size="sm" onClick={() => open({ kind: 'order', pelangganId: p.id })}>+ Order baru untuk konsumen ini</Button>
             {(p.maps || p.alamat) && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={mapsUrl(p.alamat, p.maps)} target="_blank" rel="noopener noreferrer" />}>Buka Maps</Button>}
             {p.units?.length ? <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/stiker?p=${p.id}`} target="_blank" rel="noopener" />}>Cetak stiker unit</Button> : null}
+            <Button type="button" size="sm" variant="ghost" disabled={muatLama} onClick={async () => {
+              setMuatLama(true);
+              const r = await orderPelangganLengkap(p.id);
+              setMuatLama(false);
+              if (!r.ok) return toast.error(r.error);
+              tambahOrder(r.data);
+              toast.success(`${r.data.length} order pelanggan ini dimuat`);
+            }}>{muatLama ? 'Memuat…' : 'Muat semua order lama'}</Button>
           </div>
           {info.os.length ? (
             <ul className="list">
-              {info.os.slice().sort((a, b) => b.tanggal.localeCompare(a.tanggal)).slice(0, 30).map(o => (
+              {info.os.slice().sort((a, b) => b.tanggal.localeCompare(a.tanggal)).slice(0, 200).map(o => (
                 <li key={o.id}>
                   <span className="time">{fmtD(o.tanggal)}</span>
                   <div className="main">{ringkasItems(o.items)}<div className="meta mono">{o.invoice} · {rp(o.total)}</div></div>

@@ -1,6 +1,6 @@
 'use client';
 import { createContext, useContext } from 'react';
-import type { AllData, Result } from '@/lib/types';
+import type { AllData, Order, Result } from '@/lib/types';
 
 export type Tab =
   | 'ringkasan' | 'order' | 'absensi' | 'jasa' | 'unitac' | 'sparepart' | 'harga'
@@ -42,6 +42,8 @@ export type Ctx = {
   open: (m: Modal) => void;
   invSel: string | null;
   setInvSel: (id: string | null) => void;
+  /* order lama hasil pencarian ikut dimasukkan ke data dashboard (bisa dibuka, diubah, dilihat invoicenya) */
+  tambahOrder: (os: Order[]) => void;
 };
 
 export const DashCtx = createContext<Ctx | null>(null);

@@ -13,6 +13,7 @@ import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { FotoGaleri } from './tugas';
 import { PapanRute, RuteSaya } from './rute';
+import { CariOrderLama } from './cari-lama';
 import { anggotaTim, namaTim, urutTim } from '@/lib/tim';
 
 type Period = 'hari' | 'minggu' | 'bulan' | 'semua';
@@ -67,6 +68,7 @@ function OrderTable({ jenis }: { jenis?: 'jasa' }) {
         </div>
       )}
       {tampil === 'papan' ? <PapanRute /> : <>
+      <CariOrderLama />
       <div className="toolbar">
         <div className="seg">
           {([['hari', 'Hari ini'], ['minggu', '± 7 hari'], ['bulan', 'Bulan ini'], ['semua', 'Semua']] as [Period, string][]).map(([v, l]) => (

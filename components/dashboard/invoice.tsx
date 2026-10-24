@@ -11,6 +11,7 @@ import { dokumen, esc as escDok, invoiceHtml, modelInvoice, waInvoice } from './
 import { FormDialog } from './form-dialog';
 import { BayarPill } from './order';
 import { RekapView } from './rekap';
+import { CariOrderLama } from './cari-lama';
 
 export const esc = escDok;
 
@@ -100,6 +101,7 @@ export function InvoiceView() {
           </div>
         )}
       </div>
+      {mode === 'order' && <CariOrderLama />}
       {mode === 'rekap' ? <RekapView /> : <div className="inv-layout">
         <div className="panel inv-list">
           {list.length ? list.map(o => {
