@@ -5,7 +5,7 @@ import { todayWIB } from './format';
 
 /* Backup lengkap mingguan: SEMUA data dashboard dalam satu file JSON di Google Drive
    (Karyawan AI / Dashboard Bisnis / Backup Lengkap). File ini bisa dipakai untuk memulihkan
-   atau memindahkan seluruh data ke sistem lain kapan saja. Disimpan 26 file terbaru (±6 bulan).
+   atau memindahkan seluruh data ke sistem lain kapan saja. Disimpan 52 file terbaru (±12 bulan).
    Yang SENGAJA tidak ikut: kunci rahasia (settings/foto, rahasia/*) dan hash PIN akun login. */
 const KOLEKSI = ['orders', 'pelanggan', 'stok', 'mutasi', 'karyawan', 'absensi', 'catatan', 'rekap', 'stiker', 'tim', 'izin', 'riwayat', 'sampah', 'counters'];
 const SETTINGS_AMAN = ['usaha', 'tarif', 'lokasi', 'arsip', 'backup'];

@@ -157,7 +157,7 @@ function BackupLengkap() {
       <h3>Backup lengkap mingguan ke Google Drive</h3>
       <p className="hint" style={{ marginBottom: 10 }}>
         Setiap Senin dini hari, <b>semua data</b> (order, pelanggan & unit AC, stiker, stok, daftar harga, karyawan, absensi, tim, izin, invoice, riwayat)
-        disimpan sebagai satu file di Drive: <b>Karyawan AI → Dashboard Bisnis → Backup Lengkap</b>. Disimpan 26 file terakhir (±6 bulan).
+        disimpan sebagai satu file di Drive: <b>Karyawan AI → Dashboard Bisnis → Backup Lengkap</b>. Disimpan 52 file terakhir (±12 bulan). Foto pekerjaan tidak ikut dihapus — foto tersimpan permanen di folder Foto.
         File ini bisa dipakai untuk memulihkan atau memindahkan data ke sistem lain. Kunci rahasia & PIN tidak ikut disimpan.
       </p>
       <p style={{ margin: '0 0 12px' }}>

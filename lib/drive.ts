@@ -34,10 +34,10 @@ export async function ambilFoto(id: string) {
   return Buffer.from(String(r.data), 'base64');
 }
 
-/* backup lengkap (JSON) ke folder "Backup Lengkap"; skrip menyimpan 26 file terbaru.
+/* backup lengkap (JSON) ke folder "Backup Lengkap"; skrip menyimpan 52 file terbaru (±12 bulan).
    Butuh skrip versi baru (aksi "backup") — kalau masih versi lama, skrip membalas "aksi tidak dikenal". */
 export async function simpanBackupDrive(nama: string, isi: Buffer) {
-  const r = await panggil(await cfg(), { action: 'backup', name: nama, data: isi.toString('base64'), simpan: 26 });
+  const r = await panggil(await cfg(), { action: 'backup', name: nama, data: isi.toString('base64'), simpan: 52 });
   return { url: String(r.url || ''), folder: String(r.folder || '') };
 }
 
