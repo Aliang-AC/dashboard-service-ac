@@ -1,6 +1,7 @@
 import { runBackup } from '@/lib/backup';
 import { arsipkan, tandaiAlpa } from '@/lib/absen';
 import { bersihkanSampah } from '@/lib/sampah';
+import { buatBackupLengkap, catatGagalBackupLengkap } from '@/lib/backup-lengkap';
 import { addDays, todayWIB } from '@/lib/format';
 
 /* Dipanggil otomatis oleh Vercel Cron (vercel.json) tiap 00:00 WIB, dengan header Authorization: Bearer <CRON_SECRET>.
@@ -21,6 +22,12 @@ export async function GET(req: Request) {
   await step('arsip', () => arsipkan(tanggal));
   await step('backup', () => runBackup());
   await step('sampah', () => bersihkanSampah()); // isi tempat sampah > 30 hari dihapus permanen
+  /* backup lengkap ke Google Drive seminggu sekali (malam Senin, setelah data hari Minggu lengkap) */
+  if (new Date(addDays(todayWIB(), 0) + 'T00:00:00Z').getUTCDay() === 1 || new URL(req.url).searchParams.get('lengkap') === '1')
+    await step('backupLengkap', async () => {
+      try { return await buatBackupLengkap(); }
+      catch (e) { await catatGagalBackupLengkap(e instanceof Error ? e.message : String(e)); throw e; }
+    });
   const ok = !Object.values(out).some(v => typeof v === 'object' && v !== null && 'error' in v);
   return Response.json({ ok, ...out }, { status: ok ? 200 : 500 });
 }

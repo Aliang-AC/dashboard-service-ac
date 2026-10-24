@@ -186,7 +186,8 @@ export type AllData = {
   today: string;
   versi: number; // penanda versi data saat dimuat
   /* hanya diisi untuk pemilik */
-  backup: { at: number; rows: number } | null; backupUrl: string | null; arsipUrl: string | null;
+  backup: { at: number; rows: number } | null;
+  backupLengkap: { at: number; ok: boolean; dokumen?: number; ukuranKb?: number; url?: string; folder?: string; error?: string } | null; backupUrl: string | null; arsipUrl: string | null;
 };
 
 export type Result = { ok: true } | { ok: false; error: string };

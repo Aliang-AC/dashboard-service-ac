@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { backupNow, saveLokasi, saveSettings, setDriveFoto } from '@/app/actions';
+import { backupLengkapSekarang, backupNow, saveLokasi, saveSettings, setDriveFoto } from '@/app/actions';
 import { formObj, useDash } from './ctx';
 import { TEMPLATE_PENGINGAT } from './pelanggan';
 
@@ -140,6 +140,36 @@ function Backup() {
         </Button>
         {d.backupUrl && <Button variant="outline" nativeButton={false} render={<a href={d.backupUrl} target="_blank" rel="noopener noreferrer" />}>Buka sheet backup</Button>}
         {d.arsipUrl && <Button variant="outline" nativeButton={false} render={<a href={d.arsipUrl} target="_blank" rel="noopener noreferrer" />}>Buka arsip absensi</Button>}
+      </div>
+      <BackupLengkap />
+    </div>
+  );
+}
+
+/* backup lengkap mingguan (semua data, file JSON) ke Google Drive */
+function BackupLengkap() {
+  const { d, run } = useDash();
+  const [busy, setBusy] = useState(false);
+  const b = d.backupLengkap;
+  const kapan = (at: number) => new Date(at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium', timeStyle: 'short' }) + ' WIB';
+  return (
+    <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+      <h3>Backup lengkap mingguan ke Google Drive</h3>
+      <p className="hint" style={{ marginBottom: 10 }}>
+        Setiap Senin dini hari, <b>semua data</b> (order, pelanggan & unit AC, stiker, stok, daftar harga, karyawan, absensi, tim, izin, invoice, riwayat)
+        disimpan sebagai satu file di Drive: <b>Karyawan AI → Dashboard Bisnis → Backup Lengkap</b>. Disimpan 26 file terakhir (±6 bulan).
+        File ini bisa dipakai untuk memulihkan atau memindahkan data ke sistem lain. Kunci rahasia & PIN tidak ikut disimpan.
+      </p>
+      <p style={{ margin: '0 0 12px' }}>
+        Terakhir: {b ? (b.ok
+          ? <b className="num">{kapan(b.at)} · {b.dokumen} data · {b.ukuranKb} KB</b>
+          : <b style={{ color: 'var(--bad)' }}>gagal {kapan(b.at)} — {b.error}</b>) : <b>Belum pernah</b>}
+      </p>
+      <div className="actions">
+        <Button disabled={busy} onClick={async () => { setBusy(true); await run(backupLengkapSekarang(), 'Backup lengkap tersimpan di Google Drive'); setBusy(false); }}>
+          {busy ? 'Menyimpan…' : 'Backup lengkap sekarang'}
+        </Button>
+        {b?.ok && b.folder && <Button variant="outline" nativeButton={false} render={<a href={b.folder} target="_blank" rel="noopener noreferrer" />}>Buka folder Backup Lengkap</Button>}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import { clerkClient } from '@clerk/nextjs/server';
 import { adminDb } from '@/lib/firebase-admin';
 import { atLeast, requireMe } from '@/lib/access';
 import { backupSheetUrl, runBackup } from '@/lib/backup';
+import { buatBackupLengkap, catatGagalBackupLengkap } from '@/lib/backup-lengkap';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
 import { buangFoto, fotoAktif, sambungSkrip, uploadFoto } from '@/lib/drive';
 import { addDays, nowTimeWIB, rp, todayWIB } from '@/lib/format';
@@ -169,6 +170,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     const izinSnap = await db.collection('izin').where('sampai', '>=', addDays(todayWIB(), -62)).get();
     let iz = docs<Izin>(izinSnap).sort((a, b) => b.at - a.at);
     const arsipId = me.peran === 'owner' ? (await db.doc('settings/arsip').get()).get('absensiSheetId') : null;
+    const backupL = me.peran === 'owner' ? await db.doc('settings/backupLengkap').get() : null;
 
     let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
     let a = docs<Absensi>(absensi), c = docs<Catatan>(catatan), pl = docs<Pelanggan>(pelanggan);
@@ -204,6 +206,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       riwayat: riwayatSnap ? docs<Riwayat>(riwayatSnap) : [],
       sampah: sampahSnap ? sampahSnap.docs.map(x => ({ id: x.id, koleksi: x.get('koleksi'), judul: x.get('judul'), oleh: x.get('oleh'), at: x.get('at'), hapusPada: x.get('hapusPada') })) : [], lokasi: lok, today: todayWIB(), versi,
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
+      backupLengkap: backupL?.exists ? (backupL.data() as AllData['backupLengkap']) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
       arsipUrl: arsipId ? `https://docs.google.com/spreadsheets/d/${arsipId}/edit` : null,
     } satisfies AllData;
@@ -1783,6 +1786,20 @@ export async function saveLokasi(v: Lokasi): Promise<Result> {
     if (!lat || !lng || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new UserError('Koordinat tidak valid.');
     if (radius < 20 || radius > 1000) throw new UserError('Radius harus 20–1000 meter.');
     await adminDb().doc('settings/lokasi').set({ lat, lng, radius });
+  });
+}
+
+/* pemilik: backup lengkap (semua data, JSON) ke Google Drive sekarang */
+export async function backupLengkapSekarang(): Promise<Result> {
+  return run('owner', async () => {
+    try { await buatBackupLengkap(); }
+    catch (e) {
+      console.error(e);
+      const m = e instanceof Error ? e.message : String(e);
+      await catatGagalBackupLengkap(m);
+      throw new UserError(/aksi tidak dikenal/i.test(m) ? 'Skrip Drive masih versi lama. Perbarui skrip Apps Script dulu (lihat panduan di Pengaturan → Backup).'
+        : m === 'FOTO_BELUM_AKTIF' ? 'Skrip Drive belum tersambung (Pengaturan → Foto bukti kerja).' : 'Backup lengkap gagal. Coba lagi beberapa saat lagi.');
+    }
   });
 }
 
