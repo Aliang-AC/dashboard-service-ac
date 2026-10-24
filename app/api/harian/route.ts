@@ -1,5 +1,6 @@
 import { runBackup } from '@/lib/backup';
 import { arsipkan, tandaiAlpa } from '@/lib/absen';
+import { bersihkanSampah } from '@/lib/sampah';
 import { addDays, todayWIB } from '@/lib/format';
 
 /* Dipanggil otomatis oleh Vercel Cron (vercel.json) tiap 00:00 WIB, dengan header Authorization: Bearer <CRON_SECRET>.
@@ -19,6 +20,7 @@ export async function GET(req: Request) {
   await step('alpa', () => tandaiAlpa(tanggal));
   await step('arsip', () => arsipkan(tanggal));
   await step('backup', () => runBackup());
+  await step('sampah', () => bersihkanSampah()); // isi tempat sampah > 30 hari dihapus permanen
   const ok = !Object.values(out).some(v => typeof v === 'object' && v !== null && 'error' in v);
   return Response.json({ ok, ...out }, { status: ok ? 200 : 500 });
 }

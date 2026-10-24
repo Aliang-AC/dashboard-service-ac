@@ -4,7 +4,7 @@ import useSWR from 'swr';
 import { toast } from 'sonner';
 import { UserButton } from '@clerk/nextjs';
 import {
-  Bell, Building2, CalendarDays, Clock, LayoutDashboard, MenuIcon, NotebookPen, Package, QrCode, Receipt, RefreshCwIcon, Settings,
+  Bell, Building2, History, CalendarDays, Clock, LayoutDashboard, MenuIcon, NotebookPen, Package, QrCode, Receipt, RefreshCwIcon, Settings,
   Snowflake, Tag, Users, Warehouse, Wrench, type LucideIcon,
 } from 'lucide-react';
 import { loadAll, versiData } from '@/app/actions';
@@ -18,6 +18,9 @@ import { StikerUnitDialog } from './unit-admin';
 import { UnitLapanganDialog } from './unit-lapangan';
 import { HargaView, KirimHargaDialog } from './harga';
 import { PenjualanDialog, PenjualanView } from './penjualan';
+import { AturTimDialog, PesanCepatDialog } from './rute';
+import { AjukanIzinDialog } from './izin';
+import { RiwayatView } from './riwayat';
 import { BukaRollDialog, StokView, StokDialog, StokInDialog } from './stok';
 import { AbsensiView, AbsDialog, KarDialog, AkunDialog, LiburDialog, RiwayatDialog } from './absensi';
 import { InvoiceView, BayarDialog, InfoInvoiceDialog, TerbitDialog } from './invoice';
@@ -46,7 +49,9 @@ const MENU: { grup: string; items: ItemMenu[] }[] = [
   ] },
   { grup: 'Keuangan', items: [{ key: 'invoice', label: 'Invoice & Pembayaran', ic: Receipt }, { key: 'tagihan', label: 'Tagihan Instansi', ic: Building2 }] },
   { grup: 'Gudang', items: [{ key: 'stok', label: 'Stok Barang', ic: Warehouse }] },
-  { grup: 'Lainnya', items: [{ key: 'catatan', label: 'Catatan', ic: NotebookPen }, { key: 'pengaturan', label: 'Pengaturan', ic: Settings }] },
+  { grup: 'Lainnya', items: [
+    { key: 'catatan', label: 'Catatan', ic: NotebookPen }, { key: 'riwayat', label: 'Riwayat & Sampah', ic: History }, { key: 'pengaturan', label: 'Pengaturan', ic: Settings },
+  ] },
 ];
 const MENU_TEKNISI: { grup: string; items: ItemMenu[] }[] = [
   { grup: 'Menu saya', items: [
@@ -54,10 +59,10 @@ const MENU_TEKNISI: { grup: string; items: ItemMenu[] }[] = [
   ] },
 ];
 const menuFor = (p: Peran) => (p === 'karyawan' ? MENU_TEKNISI
-  : p === 'admin' ? MENU.map(g => ({ ...g, items: g.items.filter(i => i.key !== 'pengaturan') }))
+  : p === 'admin' ? MENU.map(g => ({ ...g, items: g.items.filter(i => i.key !== 'pengaturan' && i.key !== 'riwayat') }))
     : MENU);
 const SEMUA_TAB = MENU.flatMap(g => g.items.map(i => i.key));
-const PERAN_LABEL: Record<Peran, string> = { owner: 'Pemilik', admin: 'Admin', karyawan: 'Teknisi' };
+const PERAN_LABEL: Record<Peran, string> = { owner: 'Pemilik', admin: 'Admin', karyawan: 'Karyawan', layar: 'Perangkat absen' };
 
 /* angka kecil di samping menu: merah = perlu segera, oranye = perlu dicek */
 function badgeMenu(d: AllData): Partial<Record<Tab, { n: number; w?: boolean }>> {
@@ -66,7 +71,8 @@ function badgeMenu(d: AllData): Partial<Record<Tab, { n: number; w?: boolean }>>
   const lewat = d.orders.filter(o => !o.belumDitagih && o.bayar !== 'Lunas' && o.status !== 'Batal' && !!o.jatuhTempo && o.jatuhTempo < t).length;
   const belumTagih = d.orders.filter(o => o.belumDitagih && o.status === 'Selesai' && !o.rekapId).length;
   return {
-    order: { n: d.orders.filter(o => o.items.some(i => i.perluHarga) && o.status !== 'Batal').length, w: true },
+    order: { n: d.orders.filter(o => (o.items.some(i => i.perluHarga) || !!o.kendala) && o.status !== 'Batal').length, w: true },
+    absensi: { n: d.izin.filter(i => i.status === 'menunggu').length },
     pengingat: { n: d.pelanggan.filter(p => perluDiingatkan(d, p)).length },
     pelanggan: { n: d.pelanggan.filter(p => p.baru || p.cekTeknisi).length, w: true },
     invoice: { n: lewat },
@@ -198,10 +204,14 @@ export function Dashboard() {
             )}
             {tab === 'catatan' && <CatatanView />}
             {tab === 'pengaturan' && <Pengaturan />}
+            {tab === 'riwayat' && <RiwayatView />}
 
             {modal?.kind === 'jual' && <PenjualanDialog key={modal.id || 'baru'} id={modal.id} jenis={modal.jenis} onClose={close} />}
 
-            {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new-' + (modal.pelangganId || '')} id={modal.id} pelangganId={modal.pelangganId} unitIds={modal.unitIds} onClose={close} />}
+            {modal?.kind === 'order' && <OrderDialog key={modal.id || 'new-' + (modal.pelangganId || '') + (modal.timId || '')} id={modal.id} pelangganId={modal.pelangganId} unitIds={modal.unitIds} tanggalAwal={modal.tanggal} timAwal={modal.timId} onClose={close} />}
+            {modal?.kind === 'aturTim' && <AturTimDialog key={modal.tanggal} tanggal={modal.tanggal} onClose={close} />}
+            {modal?.kind === 'pesanCepat' && <PesanCepatDialog onClose={close} />}
+            {modal?.kind === 'izin' && <AjukanIzinDialog onClose={close} />}
             {modal?.kind === 'stikerUnit' && <StikerUnitDialog key={modal.unitId} pelangganId={modal.pelangganId} unitId={modal.unitId} onClose={close} />}
             {modal?.kind === 'pelanggan' && <PelangganDialog key={modal.id || 'new'} id={modal.id} onClose={close} />}
             {modal?.kind === 'bayar' && <BayarDialog id={modal.id} onClose={close} />}

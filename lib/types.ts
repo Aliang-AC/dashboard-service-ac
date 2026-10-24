@@ -1,4 +1,5 @@
 import type { Tarif } from './tarif';
+import type { TimHari } from './tim';
 export type Part = { itemId: string; nama: string; satuan: string; qty: number; harga: number };
 
 /* satu baris pekerjaan di order, mis. "Cuci AC 1/2–1 PK" · "Daikin – Kamar depan" × 2 @ 75.000 */
@@ -32,6 +33,10 @@ export type Order = {
   rekapId: string; // kalau ditagih lewat invoice gabungan bulanan
   belumDitagih: boolean; tglInvoice: string; inv: InfoInvoice;
   jual?: { pembeli: Pembeli } | null; // penjualan langsung (barang saja, tanpa jasa/jadwal)
+  /* tim & rute: timId = id ketua tim hari itu; rute = nomor urut; kendala = dilaporkan tim; pindah = riwayat dialihkan */
+  timId?: string; rute?: number;
+  kendala?: { alasan: string; oleh: string; at: number } | null;
+  pindah?: { dari: string; ke: string; oleh: string; at: number; alasan: string }[];
   invoice: string; createdAt: number; updatedAt: number; paidAt: string | null;
 };
 /* Invoice gabungan bulanan untuk instansi: mengelompokkan beberapa order; total/sisa dihitung dari order-ordernya */
@@ -48,6 +53,7 @@ export type OrderInput = {
   pelangganId: string | null; pelanggan: string; hp: string; alamat: string;
   teknisi: string[]; items: OrderItem[]; parts: { itemId: string; qty: number; harga: number }[];
   diskon: number; status: Status; ket: string; jatuhTempo: string;
+  timId?: string; // pilih tim hari itu → anggota tim jadi teknisi order
   bayarAwal: Metode | null;
 };
 
@@ -105,23 +111,46 @@ export type Stok = {
 };
 export type Mutasi = { id: string; createdAt: number; tanggal: string; itemId: string; nama: string; jenis: 'Masuk' | 'Keluar' | 'Kembali' | 'Koreksi' | 'Buka roll'; qty: number | string; ket: string };
 
-export type Peran = 'owner' | 'admin' | 'karyawan';
+/* layar = akun perangkat absen (HP/tablet di bengkel) yang hanya bisa membuka Layar Absen */
+export type Peran = 'owner' | 'admin' | 'karyawan' | 'layar';
+/* posisi kerja: menentukan menu & tugas (teknisi = ketua tim, helper = anggota tim) */
+export const POSISI = { teknisi: 'Teknisi', helper: 'Helper', admin: 'Admin', perangkat: 'Perangkat absen', lainnya: 'Lainnya' } as const;
+export type Posisi = keyof typeof POSISI;
 /* liburMingguan: hari libur rutin, 0 = Minggu … 6 = Sabtu.
    akun: akun login (nomor HP) yang terhubung ke karyawan ini. */
+/* peran = jabatan (teks bebas, lama); posisi = posisi kerja terstruktur; bisaKetua = helper yang bisa jadi ketua tim (teknisi dadakan);
+   urutan = urutan tim di papan rute (Tim Jovanda 1, Tim Rudi 2, Tim Loren 3, …) */
 export type Karyawan = {
   id: string; nama: string; peran: string; hp: string; nonaktif: boolean;
   liburMingguan?: number[];
-  akun?: { uid: string; username: string; peran: 'admin' | 'karyawan' } | null;
+  posisi?: Posisi; bisaKetua?: boolean; urutan?: number;
+  akun?: { uid: string; username: string; peran: 'admin' | 'karyawan' | 'layar' } | null;
 };
+/* posisi karyawan (data lama tanpa posisi ditebak dari jabatan) */
+export function posisiKaryawan(k: Pick<Karyawan, 'posisi' | 'peran' | 'akun'>): Posisi {
+  if (k.posisi && k.posisi in POSISI) return k.posisi;
+  if (k.akun?.peran === 'layar') return 'perangkat';
+  const j = (k.peran || '').toLowerCase();
+  return /helper|kenek/.test(j) ? 'helper' : /teknisi/.test(j) ? 'teknisi' : /admin/.test(j) ? 'admin' : 'lainnya';
+}
 
 export type AbsLoc = { lat: number; lng: number; jarak: number; acc: number };
 /* via: QR (scan di bengkel), Manual (diinput pemilik/admin), Otomatis (Alpa tengah malam) */
 export type AbsRecord = {
   status?: AbsStatus; masuk?: string; pulang?: string; ket?: string;
   masukLoc?: AbsLoc; pulangLoc?: AbsLoc;
-  via?: 'QR' | 'Manual' | 'Otomatis'; oleh?: string;
+  via?: 'QR' | 'Manual' | 'Otomatis' | 'Pengajuan'; oleh?: string;
 };
 export type Absensi = { id: string; tanggal: string; records: Record<string, AbsRecord> };
+/* riwayat perubahan & tempat sampah (khusus pemilik) */
+export type Riwayat = { id: string; at: number; oleh: string; peran: string; aksi: string; koleksi: string; docId: string; judul: string; detail: string };
+export type SampahItem = { id: string; koleksi: string; judul: string; oleh: string; at: number; hapusPada: number };
+/* pengajuan izin / sakit dari karyawan; disetujui / ditolak pemilik atau admin */
+export const JENIS_IZIN = ['Sakit', 'Izin', 'Lainnya'] as const;
+export type Izin = {
+  id: string; kid: string; nama: string; dari: string; sampai: string; jenis: (typeof JENIS_IZIN)[number]; alasan: string;
+  status: 'menunggu' | 'disetujui' | 'ditolak'; at: number; diputus?: { oleh: string; at: number };
+};
 export type Catatan = {
   id: string; tipe: string; judul: string; isi: string; tanggal: string; jam: string;
   pelanggan: string; untuk: string; selesai: boolean; doneAt?: number; createdAt: number;
@@ -133,6 +162,7 @@ export type Layanan = { nama: string; harga: number };
 export type Settings = {
   nama?: string; alamat?: string; hp?: string; jamMasuk?: string; jamMasukMinggu?: string; rekening?: string; layanan?: Layanan[];
   templatePengingat?: string; templateAjakForm?: string; templateScan?: string;
+  pesanCepat?: { judul: string; teks: string }[]; // pesan WA cepat teknisi → konsumen
   rekeningInstansi?: string; penanggungJawab?: string; jabatan?: string; email?: string; npwp?: string;
 };
 
@@ -148,6 +178,9 @@ export type Me = { uid: string; nama: string; login: string; peran: Peran; karya
 export type AllData = {
   me: Me;
   orders: Order[]; stok: Stok[]; mutasi: Mutasi[]; karyawan: Karyawan[]; pelanggan: Pelanggan[]; rekap: Rekap[]; fotoAktif: boolean;
+  tim: TimHari[]; // susunan tim harian (±7 hari)
+  izin: Izin[];   // pengajuan izin/sakit (karyawan: miliknya saja)
+  riwayat: Riwayat[]; sampah: SampahItem[]; // khusus pemilik
   tarif: Tarif; // daftar harga (karyawan: hanya nama layanan, tanpa harga & paket)
   absensi: Absensi[]; catatan: Catatan[]; settings: Settings; lokasi: Lokasi | null;
   today: string;

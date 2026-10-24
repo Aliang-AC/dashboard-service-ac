@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { hapusFoto, kirimFoto, teknisiLapor, teknisiStatus } from '@/app/actions';
 import { STATUS_CLS } from '@/lib/derive';
 import { fmtD, waNumber } from '@/lib/format';
-import { JENIS_FOTO, type Foto, type Order, type Status } from '@/lib/types';
+import { JENIS_FOTO, posisiKaryawan, type Foto, type Order, type Status } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { mapsUrl } from './order';
@@ -92,6 +92,10 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
   const { d, run, open } = useDash();
   const o = d.orders.find(x => x.id === id);
   const p = d.pelanggan.find(x => x.id === o?.pelangganId);
+  /* WA konsumen, tambah pekerjaan & sparepart: hanya ketua tim (teknisi), bukan helper; admin/pemilik selalu boleh */
+  const saya = d.karyawan.find(k => k.id === d.me.karyawanId);
+  const tim = d.tim.find(h => h.id === o?.tanggal)?.tim.find(t => t.id === o?.timId);
+  const bolehWa = d.me.peran !== 'karyawan' || (tim ? tim.ketua === d.me.karyawanId : !!saya && posisiKaryawan(saya) === 'teknisi');
   const [items, setItems] = useState<Baru[]>([]);
   const [parts, setParts] = useState<PartBaru[]>([]);
   const lay = d.tarif.layanan;
@@ -116,7 +120,7 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
         <div className="actions">
           {o.alamat && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={mapsUrl(o.alamat)} target="_blank" rel="noopener noreferrer" />}>📍 Google Maps</Button>}
           {o.hp && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`tel:${o.hp}`} />}>📞 Telepon</Button>}
-          {waNumber(o.hp) && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`https://wa.me/${waNumber(o.hp)}`} target="_blank" rel="noopener noreferrer" />}>WhatsApp</Button>}
+          {waNumber(o.hp) && bolehWa && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`https://wa.me/${waNumber(o.hp)}`} target="_blank" rel="noopener noreferrer" />}>WhatsApp</Button>}
         </div>
       </div>
 
@@ -159,6 +163,7 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
 
       <FotoGaleri o={o} bisaTambah={o.status !== 'Batal'} />
 
+      {bolehWa && <>
       <fieldset className="box">
         <legend>Tambah pekerjaan di lokasi</legend>
         <datalist id="unitTugas">{units.map(u => <option key={u} value={u} />)}</datalist>
@@ -195,6 +200,7 @@ export function TugasDialog({ id, onClose }: { id: string; onClose: () => void }
         ))}
         <div><Button type="button" size="sm" variant="outline" disabled={!stok.length} onClick={() => setParts(xs => [...xs, { key: ++k, itemId: '', qty: '1' }])}>+ Sparepart dipakai</Button></div>
       </fieldset>
+      </>}
 
       {o.catatanTeknisi && <fieldset className="box"><legend>Catatan sebelumnya</legend><p style={{ margin: 0, whiteSpace: 'pre-wrap' }} className="sm">{o.catatanTeknisi}</p></fieldset>}
       <label className="lbl">Catatan teknisi<textarea className="field" name="catatan" placeholder="mis. kapasitor outdoor lemah, sarankan ganti" /></label>

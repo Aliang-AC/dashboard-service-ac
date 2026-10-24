@@ -4,7 +4,7 @@ import { getAccess } from '@/lib/access';
 import { AuthShell } from '@/components/auth-shell';
 import { LayarAbsen } from '@/components/absen/layar-absen';
 
-/* Layar QR untuk HP/tablet di bengkel. Hanya pemilik & admin. */
+/* Layar QR untuk HP/tablet di bengkel. Pemilik, admin, atau akun perangkat absen. */
 export default function Page() {
   return (
     <Suspense fallback={<div className="empty" style={{ paddingTop: 80 }}>Memuat…</div>}>

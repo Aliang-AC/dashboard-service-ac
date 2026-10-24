@@ -44,7 +44,7 @@ export function PenjualanView({ jenis }: { jenis: 'unit' | 'sparepart' }) {
         </div>
       </div>
       <div className="kpis">
-        {d.me.peran === 'owner' && <div className="kpi"><span className="lab">Bulan ini</span><span className="val">{rp(bulanIni.reduce((a, o) => a + o.total, 0))}</span><span className="note">{bulanIni.length} transaksi</span></div>}
+        {d.me.peran !== 'karyawan' && <div className="kpi"><span className="lab">Bulan ini</span><span className="val">{rp(bulanIni.reduce((a, o) => a + o.total, 0))}</span><span className="note">{bulanIni.length} transaksi</span></div>}
         <div className={`kpi${bon.length ? ' alert' : ''}`}><span className="lab">Bon belum lunas</span><span className="val">{rp(bon.reduce((a, o) => a + sisa(o), 0))}</span><span className="note">{bon.length} pembeli</span></div>
       </div>
       <div className="toolbar">

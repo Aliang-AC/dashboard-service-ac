@@ -33,7 +33,7 @@ export async function getAccess(): Promise<AccessState> {
     return { kind: 'ok', me: { uid: user.id, nama, login, peran: 'owner', karyawanId: a.get('karyawanId') || null } };
   }
   const snap = await adminDb().doc('akun/' + user.id).get();
-  if (snap.exists && (snap.get('peran') === 'admin' || snap.get('peran') === 'karyawan')) {
+  if (snap.exists && ['admin', 'karyawan', 'layar'].includes(snap.get('peran'))) {
     return { kind: 'ok', me: { uid: user.id, nama: snap.get('nama') || nama, login, peran: snap.get('peran'), karyawanId: snap.get('karyawanId') || null } };
   }
   return { kind: 'denied', login };
@@ -45,5 +45,6 @@ export async function requireMe(): Promise<Me> {
   return a.me;
 }
 
-/* urutan hak: owner > admin > karyawan */
-export const atLeast = (p: Peran, min: Peran) => ({ owner: 3, admin: 2, karyawan: 1 })[p] >= ({ owner: 3, admin: 2, karyawan: 1 })[min];
+/* urutan hak: owner > admin > karyawan > layar (perangkat absen) */
+const TINGKAT: Record<Peran, number> = { owner: 3, admin: 2, karyawan: 1, layar: 0 };
+export const atLeast = (p: Peran, min: Peran) => TINGKAT[p] >= TINGKAT[min];

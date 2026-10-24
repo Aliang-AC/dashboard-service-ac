@@ -4,10 +4,13 @@ import type { AllData, Result } from '@/lib/types';
 
 export type Tab =
   | 'ringkasan' | 'order' | 'absensi' | 'jasa' | 'unitac' | 'sparepart' | 'harga'
-  | 'pelanggan' | 'pengingat' | 'invoice' | 'tagihan' | 'stok' | 'catatan' | 'pengaturan';
+  | 'pelanggan' | 'pengingat' | 'invoice' | 'tagihan' | 'stok' | 'catatan' | 'pengaturan' | 'riwayat';
 
 export type Modal =
-  | { kind: 'order'; id?: string; pelangganId?: string; unitIds?: string[] }
+  | { kind: 'order'; id?: string; pelangganId?: string; unitIds?: string[]; tanggal?: string; timId?: string }
+  | { kind: 'aturTim'; tanggal: string }
+  | { kind: 'pesanCepat' }
+  | { kind: 'izin' }
   | { kind: 'pelanggan'; id?: string }
   | { kind: 'stikerUnit'; pelangganId: string; unitId: string }
   | { kind: 'bayar'; id: string }

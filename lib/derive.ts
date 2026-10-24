@@ -1,4 +1,4 @@
-import type { AllData, Layanan, Stok } from './types';
+import { posisiKaryawan, type AllData, type Layanan, type Stok } from './types';
 import { totalStok } from './stok';
 
 export const LAYANAN_DEFAULT: Layanan[] = ['Cuci AC', 'Isi freon', 'Tambah freon', 'Perbaikan', 'Bongkar pasang', 'Pasang AC baru', 'Pengecekan'].map(nama => ({ nama, harga: 0 }));
@@ -10,7 +10,8 @@ export const NOTE_CLS: Record<string, string> = { Pengingat: 'brand', 'Belum sel
 export const ABS_CLS: Record<string, string> = { Hadir: 'good', Izin: 'brand', Sakit: 'warn', Libur: '', Alpa: 'bad' };
 
 export const layanan = (d: AllData) => (d.settings.layanan?.length ? d.settings.layanan : LAYANAN_DEFAULT);
-export const activeKar = (d: AllData) => d.karyawan.filter(k => !k.nonaktif).sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
+/* karyawan aktif (tanpa akun perangkat absen) */
+export const activeKar = (d: AllData) => d.karyawan.filter(k => !k.nonaktif && posisiKaryawan(k) !== 'perangkat').sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
 export const karName = (d: AllData, id: string) => d.karyawan.find(k => k.id === id)?.nama || '';
 export const isLow = (s: Stok) => totalStok(s) <= (+s.min || 0);
 export const omzetOrders = (d: AllData) => d.orders.filter(o => o.status === 'Selesai');

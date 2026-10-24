@@ -1,12 +1,13 @@
 'use client';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { absenManual, buatAkun, hapusAbsen, hapusAkun, liburSemua, resetPassword, saveKaryawan } from '@/app/actions';
+import { absenManual, buatAkun, hapusAbsen, hapusAkun, liburSemua, resetPassword, saveKaryawan, ubahPeranAkun } from '@/app/actions';
 import { ABS_CLS, karName } from '@/lib/derive';
 import { addDays, fmtD, fmtLong, fmtMonth, monthKey } from '@/lib/format';
-import { ABS_ST, HARI, jamMasukTgl, type AbsRecord, type AbsStatus, type AllData, type Karyawan } from '@/lib/types';
+import { ABS_ST, HARI, jamMasukTgl, POSISI, posisiKaryawan, type AbsRecord, type AbsStatus, type AllData, type Karyawan, type Posisi } from '@/lib/types';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
+import { BATAS_OFF, hariOff, IzinSaya, IzinStaff } from './izin';
 
 /* ---------- aturan tampilan ---------- */
 const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
@@ -63,6 +64,7 @@ function AbsensiStaff() {
 
   return (
     <>
+      <IzinStaff />
       <div className="section-head">
         <div><h2>Absensi karyawan</h2><p>Absen masuk & pulang lewat scan QR di bengkel (radius {d.lokasi?.radius ?? 100} m). Jam masuk Senin–Sabtu {d.settings.jamMasuk || '08:00'}{d.settings.jamMasukMinggu ? `, Minggu ${d.settings.jamMasukMinggu}` : ''}; lewat semenit pun ditandai telat.</p></div>
         <div className="actions">
@@ -93,7 +95,7 @@ function AbsensiStaff() {
                   return (
                     <tr key={k.id} className={merah ? 'out' : ''} style={merah ? { background: 'var(--bad-soft)' } : undefined}>
                       <td style={{ whiteSpace: 'nowrap' }}>
-                        <b>{k.nama}</b>{k.nonaktif && <> <span className="pill">nonaktif</span></>}
+                        <b style={hariOff(d, k.id, tgl.slice(0, 7)) > BATAS_OFF ? { color: 'var(--bad)' } : undefined}>{k.nama}</b>{k.nonaktif && <> <span className="pill">nonaktif</span></>}{hariOff(d, k.id, tgl.slice(0, 7)) > BATAS_OFF && <> <span className="pill bad">off {hariOff(d, k.id, tgl.slice(0, 7))}× bulan ini</span></>}
                         <div className="actions" style={{ marginTop: 4 }}>
                           <span className="sm">{k.peran}</span>
                           {bisaEdit && <Button size="xs" variant="outline" onClick={() => open({ kind: 'abs', id: k.id, tanggal: tgl })}>Koreksi</Button>}
@@ -158,9 +160,9 @@ function AbsensiStaff() {
               return (
                 <li key={k.id}>
                   <div className="main">
-                    <b>{k.nama}</b>{k.nonaktif && <> <span className="pill">nonaktif</span></>}
-                    {k.akun ? <> <span className={`pill ${k.akun.peran === 'admin' ? 'accent' : 'brand'}`}>{k.akun.peran === 'admin' ? 'Admin' : 'Karyawan'} · {k.akun.username}</span></> : <> <span className="pill warn">Belum punya akun</span></>}
-                    <div className="meta">{k.peran}{k.hp ? ' · ' + k.hp : ''}{k.liburMingguan?.length ? ' · libur rutin: ' + k.liburMingguan.map(h => HARI[h]).join(', ') : ''}</div>
+                    <b style={hariOff(d, k.id, month) > BATAS_OFF ? { color: 'var(--bad)' } : undefined}>{k.nama}</b>{k.nonaktif && <> <span className="pill">nonaktif</span></>}{hariOff(d, k.id, month) > BATAS_OFF && <> <span className="pill bad">off {hariOff(d, k.id, month)}×</span></>}
+                    {k.akun ? <> <span className={`pill ${k.akun.peran === 'admin' ? 'accent' : 'brand'}`}>{k.akun.peran === 'admin' ? 'Admin' : k.akun.peran === 'layar' ? 'Perangkat absen' : 'Karyawan'} · {k.akun.username}</span></> : <> <span className="pill warn">Belum punya akun</span></>}
+                    <div className="meta">{POSISI[posisiKaryawan(k)]}{k.peran && k.peran !== POSISI[posisiKaryawan(k)] ? ` (${k.peran})` : ''}{posisiKaryawan(k) === 'teknisi' && k.urutan ? ` · urutan tim ${k.urutan}` : ''}{k.bisaKetua ? ' · bisa jadi ketua tim' : ''}{k.hp ? ' · ' + k.hp : ''}{k.liburMingguan?.length ? ' · libur rutin: ' + k.liburMingguan.map(h => HARI[h]).join(', ') : ''}</div>
                   </div>
                   <span className="actions">
                     {!kunci && <Button size="sm" variant={k.akun ? 'outline' : 'default'} onClick={() => open({ kind: 'akun', id: k.id })}>{k.akun ? 'Akun' : 'Buat akun'}</Button>}
@@ -191,7 +193,7 @@ function AbsensiSaya() {
   if (!k) return <div className="panel empty"><b>Akun belum terhubung</b>Hubungi admin untuk menghubungkan akun Anda ke data karyawan.</div>;
   return (
     <>
-      <div className="section-head"><div><h2>Absensi saya</h2><p>Halo, {k.nama}. Jam masuk hari ini {jm(d.today)}.</p></div></div>
+      <div className="section-head"><div><h2>Absensi saya</h2><p>Halo bang {k.nama} 👋 Jam masuk hari ini {jm(d.today)}.</p></div></div>
       <div className="panel" style={t ? { borderColor: 'var(--bad)', background: 'var(--bad-soft)' } : undefined}>
         <h3>Hari ini · {fmtLong(d.today)} <StatusPill r={r} k={k} tgl={d.today} jamMasuk={jm(d.today)} /></h3>
         <div className="att-card" style={{ border: 0, padding: 0, background: 'transparent' }}>
@@ -225,6 +227,7 @@ function AbsensiSaya() {
           </div>
         ) : <div className="empty">Belum ada absensi bulan ini.</div>}
       </div>
+      <IzinSaya />
     </>
   );
 }
@@ -304,16 +307,30 @@ export function LiburDialog({ onClose }: { onClose: () => void }) {
 export function KarDialog({ id, onClose }: { id?: string; onClose: () => void }) {
   const { d, run } = useDash();
   const k = id ? d.karyawan.find(x => x.id === id) : undefined;
+  const [posisi, setPosisi] = useState<Posisi>(k ? posisiKaryawan(k) : 'helper');
   return (
     <FormDialog wide={false} title={k ? 'Ubah karyawan' : 'Karyawan baru'} onClose={onClose}
       onSubmit={form => {
         const f = formObj(form);
         const libur = [...new FormData(form).getAll('libur')].map(Number);
-        return run(saveKaryawan(k?.id || null, { nama: f.nama, peran: f.peran, hp: f.hp, nonaktif: !!f.nonaktif, liburMingguan: libur }), k ? 'Data karyawan diperbarui' : 'Karyawan ditambahkan');
+        return run(saveKaryawan(k?.id || null, { nama: f.nama, peran: f.peran, hp: f.hp, nonaktif: !!f.nonaktif, liburMingguan: libur, posisi, bisaKetua: !!f.bisaKetua, urutan: +f.urutan || 0 }), k ? 'Data karyawan diperbarui' : 'Karyawan ditambahkan');
       }}>
       <div className="grid2">
         <label className="lbl span2">Nama<input className="field" name="nama" required defaultValue={k?.nama || ''} autoFocus /></label>
-        <label className="lbl">Jabatan<input className="field" name="peran" defaultValue={k?.peran || ''} placeholder="Teknisi / Helper / Admin" /></label>
+        <label className="lbl">Posisi kerja
+          <select className="field" value={posisi} onChange={e => setPosisi(e.target.value as Posisi)}>
+            {(Object.keys(POSISI) as Posisi[]).map(x => <option key={x} value={x}>{POSISI[x]}</option>)}
+          </select>
+        </label>
+        <label className="lbl">Jabatan <span className="sm">(opsional)</span><input className="field" name="peran" defaultValue={k?.peran || ''} placeholder="mis. Admin 1, Teknisi senior" /></label>
+        {posisi === 'teknisi' && <label className="lbl">Urutan tim <span className="sm">(1 = paling atas)</span><input className="field" type="number" name="urutan" min={1} max={99} defaultValue={k?.urutan || ''} placeholder="mis. 1" /></label>}
+        {posisi === 'helper' && (
+          <label className="span2" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <input type="checkbox" name="bisaKetua" defaultChecked={!!k?.bisaKetua} style={{ marginTop: 4 }} />
+            <span><b>Bisa jadi ketua tim</b> (teknisi dadakan) — saat dibutuhkan, admin bisa membentuk tim atas namanya.</span>
+          </label>
+        )}
+        {posisi === 'helper' && k?.bisaKetua && <label className="lbl">Urutan tim saat jadi ketua<input className="field" type="number" name="urutan" min={1} max={99} defaultValue={k?.urutan || ''} /></label>}
         <label className="lbl">No. HP<input className="field" name="hp" inputMode="tel" defaultValue={k?.hp || ''} placeholder="0812…" /></label>
         <fieldset className="box span2">
           <legend>Libur rutin tiap minggu</legend>
@@ -346,16 +363,17 @@ export function AkunDialog({ id, onClose }: { id: string; onClose: () => void })
   if (!k.akun)
     return (
       <FormDialog wide={false} title={`Buat akun login · ${k.nama}`} submitLabel="Buat akun" onClose={onClose}
-        onSubmit={form => { const f = formObj(form); return run(buatAkun(k.id, f.hp, f.password, (f.peranAkun as 'admin' | 'karyawan') || 'karyawan'), 'Akun dibuat'); }}>
+        onSubmit={form => { const f = formObj(form); return run(buatAkun(k.id, f.hp, f.password, (f.peranAkun as 'admin' | 'karyawan' | 'layar') || 'karyawan'), 'Akun dibuat'); }}>
         <p className="hint">Karyawan login di halaman masuk dengan <b>nomor HP</b> dan <b>PIN</b> di bawah. Berikan PIN ini langsung ke karyawannya; nanti bisa diganti.</p>
         <div className="grid2">
           <label className="lbl">Nomor HP (username)<input className="field" name="hp" required inputMode="tel" defaultValue={k.hp} placeholder="081234567890" /></label>
           <label className="lbl">PIN awal<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka" /></label>
           {owner && (
             <label className="lbl span2">Peran
-              <select className="field" name="peranAkun" defaultValue="karyawan">
-                <option value="karyawan">Karyawan: hanya absen & jadwal sendiri</option>
-                <option value="admin">Admin: kelola order, stok, absensi (tanpa harga modal & omzet)</option>
+              <select className="field" name="peranAkun" defaultValue={posisiKaryawan(k) === 'perangkat' ? 'layar' : posisiKaryawan(k) === 'admin' ? 'admin' : 'karyawan'}>
+                <option value="karyawan">Karyawan (teknisi / helper): absen, jadwal & tugas timnya</option>
+                <option value="admin">Admin: kelola order, pelanggan, stok, absensi, invoice</option>
+                <option value="layar">Perangkat absen: hanya membuka Layar Absen (QR)</option>
               </select>
             </label>
           )}
@@ -366,7 +384,17 @@ export function AkunDialog({ id, onClose }: { id: string; onClose: () => void })
   return (
     <FormDialog wide={false} title={`Akun login · ${k.nama}`} submitLabel="Ganti PIN" onClose={onClose}
       onSubmit={form => { const f = formObj(form); return run(resetPassword(k.id, f.password), 'PIN diganti'); }}>
-      <p>Username: <b className="mono">{k.akun.username}</b> · peran <b>{k.akun.peran === 'admin' ? 'Admin' : 'Karyawan'}</b></p>
+      <p>Username: <b className="mono">{k.akun.username}</b> · peran <b>{k.akun.peran === 'admin' ? 'Admin' : k.akun.peran === 'layar' ? 'Perangkat absen' : 'Karyawan'}</b></p>
+      {owner && (
+        <div className="actions">
+          <span className="sm">Ubah peran:</span>
+          {(['karyawan', 'admin', 'layar'] as const).filter(x => x !== k.akun!.peran).map(x => (
+            <Button key={x} type="button" size="sm" variant="outline" onClick={() => run(ubahPeranAkun(k.id, x), 'Peran akun diubah')}>
+              {x === 'admin' ? 'Jadikan admin' : x === 'layar' ? 'Jadikan perangkat absen' : 'Jadikan karyawan'}
+            </Button>
+          ))}
+        </div>
+      )}
       <label className="lbl">PIN baru<input className="field" name="password" required minLength={6} inputMode="numeric" placeholder="min. 6 angka" autoFocus /></label>
       <p className="hint">Mengganti PIN akan mengeluarkan akun ini dari semua HP yang sedang login, dan membuka kunci kalau akun terkunci karena salah PIN.</p>
       <div>

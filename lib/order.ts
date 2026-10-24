@@ -70,7 +70,8 @@ export function normOrder(raw: any): Order {
     status: o.status, ket: o.ket || '',
     pembayaran, dibayar, bayar: statusBayar(total, dibayar), jatuhTempo: typeof o.jatuhTempo === 'string' ? o.jatuhTempo : o.tanggal,
     foto: Array.isArray(o.foto) ? o.foto : [], catatanTeknisi: o.catatanTeknisi || '', rekapId: o.rekapId || '',
-    belumDitagih: !!o.belumDitagih, tglInvoice: o.tglInvoice || o.tanggal, jual: o.jual?.pembeli ? { pembeli: o.jual.pembeli } : null, inv: o.inv && typeof o.inv === 'object' ? o.inv : {},
+    belumDitagih: !!o.belumDitagih, tglInvoice: o.tglInvoice || o.tanggal, jual: o.jual?.pembeli ? { pembeli: o.jual.pembeli } : null,
+    timId: o.timId || '', rute: +o.rute || 0, kendala: o.kendala || null, pindah: Array.isArray(o.pindah) ? o.pindah : [], inv: o.inv && typeof o.inv === 'object' ? o.inv : {},
     invoice: o.invoice || '', createdAt: o.createdAt || 0, updatedAt: o.updatedAt || 0, paidAt: o.paidAt || null,
   };
 }

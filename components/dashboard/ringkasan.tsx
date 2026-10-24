@@ -24,7 +24,7 @@ function Kpi({ lab, val, note, alert, onClick }: { lab: string; val: React.React
 export function Ringkasan() {
   const { d, go, open } = useDash();
   const t = d.today, m = t.slice(0, 7);
-  const owner = d.me.peran === 'owner'; // omzet hanya untuk pemilik
+  const owner = d.me.peran !== 'karyawan'; // omzet: pemilik & admin
   const selesai = d.orders.filter(o => o.status === 'Selesai');
   const sum = (arr: { total: number }[]) => arr.reduce((a, o) => a + (+o.total || 0), 0);
   const hariIni = selesai.filter(o => o.tanggal === t), bulanIni = selesai.filter(o => monthKey(o.tanggal) === m);

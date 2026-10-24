@@ -18,6 +18,7 @@ export default function Page() {
 async function Gate() {
   const a = await getAccess();
   if (a.kind === 'signed-out') redirect('/sign-in');
+  if (a.kind === 'ok' && a.me.peran === 'layar') redirect('/layar-absen'); // perangkat absen langsung ke layar QR
 
   if (a.kind === 'no-db')
     return (

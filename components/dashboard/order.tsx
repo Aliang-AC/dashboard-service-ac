@@ -12,6 +12,8 @@ import { hargaOtomatis, namaPaket, totalPaket, type Tarif } from '@/lib/tarif';
 import { formObj, useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { FotoGaleri } from './tugas';
+import { PapanRute, RuteSaya } from './rute';
+import { anggotaTim, namaTim, urutTim } from '@/lib/tim';
 
 type Period = 'hari' | 'minggu' | 'bulan' | 'semua';
 
@@ -28,46 +30,14 @@ export function BayarPill({ o, today }: { o: Order; today: string }) {
   return <span className={`pill ${telat ? 'bad' : o.bayar === 'Sebagian' ? 'accent' : 'warn'}`}>{teks}{telat ? ' · lewat tempo' : ''}</span>;
 }
 
-/* karyawan: hanya jadwal miliknya, tanpa angka uang (sudah disaring di server) */
-function JadwalSaya() {
-  const { d, open } = useDash();
-  const list = d.orders.filter(o => o.status !== 'Batal' && o.tanggal >= addDays(d.today, -7))
-    .sort((a, b) => (a.tanggal + (a.jam || '99')).localeCompare(b.tanggal + (b.jam || '99')));
-  return (
-    <>
-      <div className="section-head"><div><h2>Jadwal saya</h2><p>Order yang ditugaskan ke Anda (7 hari terakhir dan yang akan datang).</p></div></div>
-      {list.length ? (
-        <ul className="list panel">
-          {list.map(o => (
-            <li key={o.id} style={o.tanggal === d.today ? { background: 'var(--copper-soft)' } : undefined}>
-              <span className="time">{fmtD(o.tanggal)}<br />{o.jam || ''}</span>
-              <div className="main">
-                <b>{o.pelanggan}</b>
-                {o.items.map((i, n) => <div key={n} className="meta">• {i.layanan}{i.qty > 1 ? ` ×${i.qty}` : ''}{i.unit ? ` — ${i.unit}` : ''}</div>)}
-                <div className="meta">{o.alamat}{o.hp ? ' · ' + o.hp : ''}</div>
-                {o.ket && <div className="meta">{o.ket}</div>}
-                <div className="actions" style={{ marginTop: 6 }}>
-                  <Button size="sm" onClick={() => open({ kind: 'tugas', id: o.id })}>Buka tugas</Button>
-                  {o.alamat && <a className="linkbtn" href={mapsUrl(o.alamat)} target="_blank" rel="noopener noreferrer">📍 Maps</a>}
-                  {o.foto.length > 0 && <span className="sm">📷 {o.foto.length} foto</span>}
-                </div>
-              </div>
-              <span className={`pill ${STATUS_CLS[o.status] || ''}`}>{o.status}</span>
-            </li>
-          ))}
-        </ul>
-      ) : <div className="panel empty"><b>Belum ada jadwal</b>Order yang ditugaskan ke Anda akan muncul di sini.</div>}
-    </>
-  );
-}
-
 export function OrderView({ jenis }: { jenis?: 'jasa' }) {
   const { d } = useDash();
-  return d.me.peran === 'karyawan' ? <JadwalSaya /> : <OrderTable key={jenis || 'semua'} jenis={jenis} />;
+  return d.me.peran === 'karyawan' ? <RuteSaya /> : <OrderTable key={jenis || 'semua'} jenis={jenis} />;
 }
 
 function OrderTable({ jenis }: { jenis?: 'jasa' }) {
   const { d, open, run, go } = useDash();
+  const [tampil, setTampil] = useState<'papan' | 'daftar'>(jenis ? 'daftar' : 'papan');
   const [period, setPeriod] = useState<Period>('bulan');
   const [status, setStatus] = useState<'Semua' | Status>('Semua');
   const [q, setQ] = useState('');
@@ -90,6 +60,13 @@ function OrderTable({ jenis }: { jenis?: 'jasa' }) {
         <div><h2>{jenis ? 'Jasa Service AC' : 'Jadwal & Order'}</h2><p>{jenis ? 'Order bersihkan, cuci besar, pasang, bongkar pasang, dan service lainnya.' : 'Semua kunjungan & order teknisi. Sparepart yang dipakai otomatis mengurangi stok.'}</p></div>
         <div className="actions"><Button onClick={() => open({ kind: 'order' })}>+ Order baru</Button></div>
       </div>
+      {!jenis && (
+        <div className="seg" style={{ marginBottom: 12 }}>
+          <button aria-pressed={tampil === 'papan'} onClick={() => setTampil('papan')}>Papan rute per tim</button>
+          <button aria-pressed={tampil === 'daftar'} onClick={() => setTampil('daftar')}>Daftar semua order</button>
+        </div>
+      )}
+      {tampil === 'papan' ? <PapanRute /> : <>
       <div className="toolbar">
         <div className="seg">
           {([['hari', 'Hari ini'], ['minggu', '± 7 hari'], ['bulan', 'Bulan ini'], ['semua', 'Semua']] as [Period, string][]).map(([v, l]) => (
@@ -101,7 +78,7 @@ function OrderTable({ jenis }: { jenis?: 'jasa' }) {
         </select>
         <input type="search" className="field" value={q} onChange={e => setQ(e.target.value)} placeholder="Cari nama, alamat, no. HP, invoice, layanan…" />
       </div>
-      <p className="muted" style={{ margin: '0 0 10px' }}>{list.length} order{d.me.peran === 'owner' && <> · omzet selesai <b className="num">{rp(sum)}</b></>}</p>
+      <p className="muted" style={{ margin: '0 0 10px' }}>{list.length} order{d.me.peran !== 'karyawan' && <> · omzet selesai <b className="num">{rp(sum)}</b></>}</p>
       {list.length ? (
         <div className="tablebox">
           <table>
@@ -134,6 +111,7 @@ function OrderTable({ jenis }: { jenis?: 'jasa' }) {
       ) : (
         <div className="panel empty"><b>Belum ada order di filter ini</b>Klik “Order baru” untuk mencatat kunjungan pertama, atau ganti periode di atas.</div>
       )}
+      </>}
     </>
   );
 }
@@ -159,7 +137,7 @@ function hitungBaris(t: Tarif, pilihan: string, u: UnitAC | undefined): Pick<Ite
 type PartRow = { key: number; itemId: string; qty: string; harga: string };
 let rowKey = 0;
 
-export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string; onClose: () => void; pelangganId?: string; unitIds?: string[] }) {
+export function OrderDialog({ id, onClose, pelangganId, unitIds, tanggalAwal, timAwal }: { id?: string; onClose: () => void; pelangganId?: string; unitIds?: string[]; tanggalAwal?: string; timAwal?: string }) {
   const { d, run } = useDash();
   const o: Order | undefined = id ? d.orders.find(x => x.id === id) : undefined;
   const t = d.tarif;
@@ -186,7 +164,7 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
   };
 
   /* jadwal & jatuh tempo */
-  const [tanggal, setTanggal] = useState(o?.tanggal || d.today);
+  const [tanggal, setTanggal] = useState(o?.tanggal || tanggalAwal || d.today);
   const tempoDari = (p: Pelanggan | null, tgl: string) => addDays(tgl, p?.jenis === 'Instansi' ? p.tempoHari || 0 : 0);
   const [jatuhTempo, setJatuhTempo] = useState(o?.jatuhTempo || tempoDari(awal || null, o?.tanggal || d.today));
   const setTanggalTempo = (p: Pelanggan | null, tgl = tanggal) => setJatuhTempo(tempoDari(p, tgl));
@@ -216,6 +194,9 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
     setItem(row.key, { unitId, unit: u ? labelUnit(u) : '', ...(row.pilihan.startsWith('L:') ? hitungBaris(t, row.pilihan, u) : {}) });
   };
   const [teknisi, setTeknisi] = useState<string[]>(o?.teknisi || []);
+  const [timId, setTimId] = useState(o?.timId || timAwal || '');
+  const timTanggal = urutTim(d.tim.find(h => h.id === tanggal)?.tim || [], d.karyawan);
+  const timDipilih = timTanggal.find(x => x.id === timId);
   const [parts, setParts] = useState<PartRow[]>((o?.parts || []).map(p => ({ key: ++rowKey, itemId: p.itemId, qty: String(p.qty), harga: String(p.harga) })));
   const setPart = (key: number, patch: Partial<PartRow>) => setParts(ps => ps.map(p => (p.key === key ? { ...p, ...patch } : p)));
   const [diskon, setDiskon] = useState(o?.diskon ? String(o.diskon) : '');
@@ -240,7 +221,7 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
         const f = formObj(form);
         return run(saveOrder(o?.id || null, {
           tanggal, jam: f.jam, pelangganId: pel?.id || null, pelanggan: nama, hp, alamat,
-          teknisi, items: itemsNum, parts: partsNum.map(p => ({ itemId: p.itemId, qty: p.qty, harga: p.harga })),
+          teknisi: timDipilih ? anggotaTim(timDipilih) : teknisi, timId: timDipilih ? timId : '', items: itemsNum, parts: partsNum.map(p => ({ itemId: p.itemId, qty: p.qty, harga: p.harga })),
           diskon: +diskon || 0, status: f.status as Status, ket: f.ket, jatuhTempo, bayarAwal: o ? null : bayarAwal || null,
         }), o ? 'Order diperbarui' : 'Order tersimpan');
       }}
@@ -279,7 +260,18 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
       </div>
 
       <fieldset className="box">
-        <legend>Teknisi (boleh lebih dari satu)</legend>
+        <legend>Tim / teknisi</legend>
+        {timTanggal.length > 0 && (
+          <div className="actions">
+            {timTanggal.map(x => (
+              <button type="button" key={x.id} className={`pill ${timId === x.id ? 'brand' : ''}`} style={{ cursor: 'pointer', padding: '4px 10px' }} onClick={() => setTimId(timId === x.id ? '' : x.id)}>
+                {timId === x.id ? '✓ ' : ''}{namaTim(x, d.karyawan)} · {anggotaTim(x).map(a => d.karyawan.find(k => k.id === a)?.nama || '').join(', ')}
+              </button>
+            ))}
+          </div>
+        )}
+        {timDipilih ? <p className="hint" style={{ margin: 0 }}>Rute masuk ke {namaTim(timDipilih, d.karyawan)} (urutan paling akhir — atur di papan rute).</p> : <>
+        {timTanggal.length > 0 ? <p className="hint" style={{ margin: 0 }}>…atau pilih orang satu per satu:</p> : <p className="hint" style={{ margin: 0 }}>Belum ada tim di tanggal ini (atur di Jadwal &amp; Order → Papan rute). Pilih teknisi langsung:</p>}
         <div className="actions">
           {kar.length ? kar.map(k => (
             <label key={k.id} className="pill" style={{ cursor: 'pointer', padding: '4px 10px' }}>
@@ -287,7 +279,7 @@ export function OrderDialog({ id, onClose, pelangganId, unitIds }: { id?: string
                 onChange={e => setTeknisi(t => (e.target.checked ? [...t, k.id] : t.filter(x => x !== k.id)))} />{k.nama}
             </label>
           )) : <span className="hint">Tambahkan karyawan di tab Absensi dulu.</span>}
-        </div>
+        </div></>}
       </fieldset>
 
       <fieldset className="box">

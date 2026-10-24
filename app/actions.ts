@@ -9,19 +9,20 @@ import { atLeast, requireMe } from '@/lib/access';
 import { backupSheetUrl, runBackup } from '@/lib/backup';
 import { arsipKoreksi, buatTokenQR, cekTokenQR, getLokasi, jarakMeter } from '@/lib/absen';
 import { buangFoto, fotoAktif, sambungSkrip, uploadFoto } from '@/lib/drive';
-import { addDays, nowTimeWIB, todayWIB } from '@/lib/format';
+import { addDays, nowTimeWIB, rp, todayWIB } from '@/lib/format';
 import { bacaVersi, tandaiBerubah } from '@/lib/versi';
 import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { labelUnit, tambahBulan } from '@/lib/servis';
 import { pakaiRoll } from '@/lib/stok';
 import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, specUnit } from '@/lib/unit';
+import { anggotaTim, PESAN_CEPAT, type Tim, type TimHari } from '@/lib/tim';
 import { hargaOtomatis, JENIS_HARGA, TARIF_KOSONG, type PaketAC, type Tarif, type TarifLayanan } from '@/lib/tarif';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
 import {
-  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, MODEL_INVOICE, PEMBELI, type Pembeli, type AllData, type Order, type OrderInput, type OrderItem, type PaketOrder, type Part, type Result, type ResultOf, type Me, type Peran,
+  STATUS, ABS_ST, METODE, JENIS_PELANGGAN, MODEL_INVOICE, PEMBELI, type Pembeli, POSISI, type AllData, type Order, type OrderInput, type OrderItem, type PaketOrder, type Part, type Result, type ResultOf, type Me, type Peran,
   type Pembayaran, type Metode, type Pelanggan, type UnitAC, type Status, type Foto, JENIS_FOTO, type Rekap,
   type Pengingat, HASIL_PENGINGAT, TIPE_LOKASI, type RiwayatUnit, type Stiker, type StatusStiker,
-  type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi,
+  type Stok, type Mutasi, type Karyawan, type Absensi, type Catatan, type Settings, type AbsRecord, type Lokasi, type Izin, JENIS_IZIN, jamMasukTgl, type Riwayat, posisiKaryawan,
 } from '@/lib/types';
 
 class UserError extends Error {}
@@ -30,6 +31,7 @@ const ROLE_MSG: Record<Peran, string> = {
   owner: 'Hanya pemilik yang bisa melakukan ini.',
   admin: 'Hanya pemilik atau admin yang bisa melakukan ini.',
   karyawan: 'Akun ini belum punya akses.',
+  layar: 'Akun ini belum punya akses.',
 };
 
 /* baca = aksi yang hanya membaca (tidak menandai data berubah) */
@@ -57,6 +59,87 @@ const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 const isTime = (s: string) => s === '' || /^\d{2}:\d{2}$/.test(s);
 const r3 = (n: number) => +n.toFixed(3);
 
+/* ---------------- riwayat perubahan & tempat sampah ---------------- */
+const fmtTglR = (t?: string) => (t ? new Date(t + 'T00:00:00Z').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const NAMA_DOC: Record<string, (d: any) => string> = {
+  orders: d => [d.invoice, d.pelanggan, fmtTglR(d.tanggal)].filter(Boolean).join(' · '),
+  pelanggan: d => d.nama, stok: d => d.nama, karyawan: d => d.nama, catatan: d => d.judul,
+  izin: d => `${d.nama} · ${d.jenis} ${fmtTglR(d.dari)}`, rekap: d => `${d.nomor} · ${d.pelanggan}`, tim: d => 'Tim ' + fmtTglR(d.tanggal),
+};
+/* catat siapa mengubah apa & kapan (dibaca pemilik di menu Riwayat & Sampah). Tidak pernah menggagalkan aksi. */
+async function catat(me: Me, aksi: string, koleksi: string, id: string, detail = '', judul?: string) {
+  try {
+    const db = adminDb();
+    if (!judul && koleksi && id) { const d = await db.doc(`${koleksi}/${id}`).get(); judul = d.exists ? NAMA_DOC[koleksi]?.(d.data()) || id : id; }
+    await db.collection('riwayat').add({ at: Date.now(), oleh: me.nama, peran: me.peran, aksi, koleksi, docId: id, judul: str(judul, 200), detail: str(detail, 400) });
+  } catch (e) { console.error('riwayat', e); }
+}
+const HARI_SAMPAH = 30;
+/* data yang dihapus disimpan dulu di tempat sampah (bisa dipulihkan pemilik sampai 30 hari) */
+function keSampah(tx: Transaction, me: Me, koleksi: string, docId: string, data: unknown, judul: string, extra: Record<string, unknown> = {}) {
+  const at = Date.now();
+  tx.set(adminDb().collection('sampah').doc(), { koleksi, docId, data, judul: str(judul, 200), oleh: me.nama, at, hapusPada: at + HARI_SAMPAH * 86_400_000, ...extra });
+}
+
+/* pemilik: kembalikan data dari tempat sampah */
+export async function pulihkanSampah(id: string): Promise<Result> {
+  return run('owner', async me => {
+    const db = adminDb();
+    const sref = db.doc('sampah/' + str(id, 64));
+    let judul = '';
+    await db.runTransaction(async tx => {
+      const s = await tx.get(sref);
+      if (!s.exists) throw new UserError('Data sampah tidak ditemukan (mungkin sudah terhapus permanen).');
+      const { koleksi, docId, data, kid } = s.data() as { koleksi: string; docId: string; data: Record<string, unknown>; kid?: string };
+      judul = s.get('judul') || '';
+      if (koleksi === 'absensi') {
+        const aref = db.doc('absensi/' + docId);
+        const records = ((await tx.get(aref)).get('records') || {}) as Record<string, AbsRecord>;
+        if (kid && records[kid]) throw new UserError('Sudah ada absensi baru di tanggal itu untuk karyawan ini.');
+        tx.set(aref, { tanggal: docId, records: { ...records, [kid!]: data } }, { merge: true });
+      } else {
+        const ref = db.doc(`${koleksi}/${docId}`);
+        if ((await tx.get(ref)).exists) throw new UserError('Data dengan id yang sama sudah ada.');
+        if (koleksi === 'orders') {
+          /* order kembali → stok yang dipakai dikurangi lagi */
+          const o = normOrder({ id: docId, ...data });
+          const stokSnaps = await readStok(tx, idStok(o));
+          applyStock(tx, stokSnaps, null, o);
+        }
+        if (koleksi === 'pelanggan') {
+          /* stiker unit dipasang lagi kalau masih kosong; kalau sudah dipakai unit lain, kodenya dilepas */
+          const units = ((data.units || []) as UnitAC[]).map(u => ({ ...u }));
+          const sn = await Promise.all(units.filter(u => u.kode).map(u => tx.get(db.doc('stiker/' + u.kode))));
+          for (const u of units) {
+            if (!u.kode) continue;
+            const st = sn.find(x => x.id === u.kode);
+            if (st?.exists && st.get('status') === 'kosong') tx.set(st.ref, { status: 'aktif', pelangganId: docId, unitId: u.id }, { merge: true });
+            else delete u.kode;
+          }
+          data.units = units;
+          data.unitKodes = kodesDari(units);
+          data.updatedAt = Date.now();
+        }
+        tx.set(ref, data);
+      }
+      tx.delete(sref);
+    });
+    await catat(me, 'Dipulihkan dari tempat sampah', '', '', '', judul);
+  });
+}
+
+/* pemilik: hapus permanen sekarang (tanpa menunggu 30 hari) */
+export async function hapusPermanen(id: string): Promise<Result> {
+  return run('owner', async me => {
+    const ref = adminDb().doc('sampah/' + str(id, 64));
+    const s = await ref.get();
+    if (!s.exists) return;
+    await ref.delete();
+    await catat(me, 'Dihapus permanen', '', '', '', s.get('judul') || '');
+  });
+}
+
 /* ---------------- baca data (disaring sesuai peran) ---------------- */
 export async function loadAll(): Promise<ResultOf<AllData>> {
   const r = await guarded('karyawan', async me => {
@@ -79,6 +162,12 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       fotoAktif(),
     ]);
     const rekap = staff ? await db.collection('rekap').orderBy('createdAt', 'desc').limit(300).get() : null;
+    const timSnap = await db.collection('tim').where('tanggal', '>=', addDays(todayWIB(), -7)).get();
+    const [riwayatSnap, sampahSnap] = me.peran === 'owner'
+      ? await Promise.all([db.collection('riwayat').orderBy('at', 'desc').limit(300).get(), db.collection('sampah').orderBy('at', 'desc').limit(300).get()])
+      : [null, null];
+    const izinSnap = await db.collection('izin').where('sampai', '>=', addDays(todayWIB(), -62)).get();
+    let iz = docs<Izin>(izinSnap).sort((a, b) => b.at - a.at);
     const arsipId = me.peran === 'owner' ? (await db.doc('settings/arsip').get()).get('absensiSheetId') : null;
 
     let o = orders.docs.map(d => normOrder({ id: d.id, ...d.data() })), s = docs<Stok>(stok), k = docs<Karyawan>(karyawan);
@@ -98,6 +187,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       k = k.filter(x => x.id === kid).map(x => ({ ...x, akun: x.akun }));
       a = a.map(d => ({ ...d, records: d.records?.[kid] ? { [kid]: d.records[kid] } : {} }));
       c = c.filter(x => !x.untuk || x.untuk === kid);
+      iz = iz.filter(x => x.kid === kid);
       /* konsumen dari order yang ia tangani (untuk mencatat unit AC & pasang stiker di lokasi) */
       const pids = new Set(o.map(x => x.pelangganId).filter(Boolean));
       pl = pl.filter(x => pids.has(x.id)).map(x => ({ ...x, tempoHari: 0, catatan: '', pengingat: undefined }));
@@ -105,12 +195,14 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
       s = s.map(x => ({ ...x, hargaBeli: null, hargaJual: 0, hargaMitra: 0 }));
       /* teknisi: hanya nama layanan (tanpa harga & paket) untuk "tambah pekerjaan di lokasi" */
       tarif = { layanan: tarif.layanan.map(l => ({ id: l.id, nama: l.nama, jenis: l.jenis })), paket: [], infoPaket: {} };
-      st = { nama: st.nama, jamMasuk: st.jamMasuk, jamMasukMinggu: st.jamMasukMinggu, layanan: tarif.layanan.map(l => ({ nama: l.nama, harga: 0 })) };
+      st = { nama: st.nama, jamMasuk: st.jamMasuk, jamMasukMinggu: st.jamMasukMinggu, pesanCepat: st.pesanCepat, layanan: tarif.layanan.map(l => ({ nama: l.nama, harga: 0 })) };
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
       pelanggan: pl, rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto,
-      settings: st, tarif, lokasi: lok, today: todayWIB(), versi,
+      settings: st, tarif, tim: docs<TimHari>(timSnap), izin: iz,
+      riwayat: riwayatSnap ? docs<Riwayat>(riwayatSnap) : [],
+      sampah: sampahSnap ? sampahSnap.docs.map(x => ({ id: x.id, koleksi: x.get('koleksi'), judul: x.get('judul'), oleh: x.get('oleh'), at: x.get('at'), hapusPada: x.get('hapusPada') })) : [], lokasi: lok, today: todayWIB(), versi,
       backup: backup?.exists ? (backup.data() as { at: number; rows: number }) : null,
       backupUrl: me.peran === 'owner' ? backupSheetUrl() : null,
       arsipUrl: arsipId ? `https://docs.google.com/spreadsheets/d/${arsipId}/edit` : null,
@@ -237,6 +329,7 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
 
     const db = adminDb();
     const ref = id ? db.doc('orders/' + id) : db.collection('orders').doc();
+    let ringkas = '';
     await db.runTransaction(async tx => {
       /* ---- baca dulu semua ---- */
       const oldSnap = id ? await tx.get(ref) : null;
@@ -254,6 +347,14 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         if (!q.empty) { pSnap = q.docs[0]; pRef = q.docs[0].ref; }
       }
       const pel = pSnap?.exists ? ({ id: pSnap.id, ...pSnap.data() } as Pelanggan) : null;
+      /* tim hari itu: anggota tim jadi teknisi order; rute baru ditaruh paling akhir */
+      const timId = str(input.timId, 64);
+      const hari = timId ? await tx.get(db.doc('tim/' + tanggal)) : null;
+      const tim = timId ? ((hari?.get('tim') || []) as Tim[]).find(t => t.id === timId) : undefined;
+      if (timId && !tim) throw new UserError('Tim yang dipilih tidak ada di tanggal itu. Atur tim dulu.');
+      const sejawat = tim && !(old && old.timId === timId && old.tanggal === tanggal)
+        ? await tx.get(db.collection('orders').where('tanggal', '==', tanggal)) : null;
+      const ruteBaru = sejawat ? Math.max(0, ...sejawat.docs.filter(x => x.get('timId') === timId).map(x => +x.get('rute') || 0)) + 1 : 0;
 
       /* ---- hitung ---- */
       /* order instansi baru: belum ditagih — nomor invoice dibuat saat admin menerbitkan invoice */
@@ -287,7 +388,8 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         tx.set(pelRef, { nama, hp, hpNorm: normalHp(hp) || '', alamat, maps: '', jenis: 'Perorangan', tempoHari: 0, intervalBulan: 3, units: sambung.units, unitKodes, catatan: '', izinPengingat: true, sumber: 'Order', createdAt: Date.now(), updatedAt: Date.now() });
       }
       const doc: Omit<Order, 'id'> = {
-        tanggal, jam, pelangganId: pelRef.id, pelanggan: nama, hp, alamat, teknisi,
+        tanggal, jam, pelangganId: pelRef.id, pelanggan: nama, hp, alamat, teknisi: tim ? anggotaTim(tim) : teknisi,
+        timId: tim ? timId : '', rute: tim ? (ruteBaru || old?.rute || 1) : 0, kendala: old?.kendala || null, pindah: old?.pindah || [],
         items: sambung.items, parts, diskon, total, status, ket: str(input.ket, 1000),
         pembayaran, dibayar, bayar, jatuhTempo,
         foto: old?.foto || [], catatanTeknisi: old?.catatanTeknisi || '', rekapId: old?.rekapId || '',
@@ -296,14 +398,21 @@ export async function saveOrder(id: string | null, input: OrderInput): Promise<R
         paidAt: bayar === 'Lunas' ? old?.paidAt || todayWIB() : null,
       };
       if (next) tx.set(counterRef, { n: next });
+      ringkas = old ? [
+        old.status !== doc.status && `status ${old.status} → ${doc.status}`,
+        old.total !== doc.total && `total ${rp(old.total)} → ${rp(doc.total)}`,
+        old.tanggal !== doc.tanggal && `tanggal ${fmtTglR(old.tanggal)} → ${fmtTglR(doc.tanggal)}`,
+        old.diskon !== doc.diskon && `potongan ${rp(old.diskon)} → ${rp(doc.diskon)}`,
+      ].filter(Boolean).join('; ') : `total ${rp(doc.total)}`;
       tx.set(ref, { ...doc, fotoIds: doc.foto.map(f => f.id) }); // fotoIds: indeks untuk cek akses foto
       applyStock(tx, stokSnaps, old, { id: ref.id, ...doc });
     });
+    await catat(me, id ? 'Order diubah' : 'Order dibuat', 'orders', ref.id, ringkas);
   });
 }
 
 export async function deleteOrder(id: string): Promise<Result> {
-  return run('owner', async () => {
+  return run('owner', async me => {
     const db = adminDb();
     const ref = db.doc('orders/' + str(id, 64));
     await db.runTransaction(async tx => {
@@ -311,14 +420,16 @@ export async function deleteOrder(id: string): Promise<Result> {
       if (!s.exists) return;
       const old = normOrder({ id: s.id, ...s.data() });
       const stokSnaps = await readStok(tx, idStok(old));
+      keSampah(tx, me, 'orders', s.id, s.data(), NAMA_DOC.orders(old));
       tx.delete(ref);
       applyStock(tx, stokSnaps, old, null);
     });
+    await catat(me, 'Order dihapus (ke tempat sampah)', 'orders', str(id, 64), '', '');
   });
 }
 
 export async function setOrderStatus(id: string, status: Order['status']): Promise<Result> {
-  return run('admin', async () => {
+  return run('admin', async me => {
     if (!STATUS.includes(status)) throw new UserError('Status tidak dikenal.');
     const db = adminDb();
     const ref = db.doc('orders/' + str(id, 64));
@@ -330,6 +441,7 @@ export async function setOrderStatus(id: string, status: Order['status']): Promi
       tx.update(ref, { status, updatedAt: Date.now() });
       applyStock(tx, stokSnaps, old, { ...old, status });
     });
+    await catat(me, `Status order → ${status}`, 'orders', str(id, 64));
   });
 }
 
@@ -358,12 +470,13 @@ export async function tambahPembayaran(id: string, v: { tanggal: string; jumlah:
       if (jumlah > Math.max(0, o.total - o.dibayar)) throw new UserError(`Jumlah melebihi sisa tagihan (${Math.max(0, o.total - o.dibayar).toLocaleString('id-ID')}).`);
       return [...p, { id: 'p' + Date.now().toString(36), tanggal, jumlah, metode: v.metode, ket: str(v.ket, 200), oleh: me.nama, at: Date.now() }];
     });
+    await catat(me, 'Pembayaran dicatat', 'orders', str(id, 64), `${rp(jumlah)} · ${v.metode}`);
   });
 }
 
 /* hapus catatan pembayaran (salah input) — khusus pemilik */
 export async function hapusPembayaran(id: string, pid: string): Promise<Result> {
-  return run('owner', async () => { await ubahPembayaran(id, p => p.filter(x => x.id !== pid)); });
+  return run('owner', async me => { await ubahPembayaran(id, p => p.filter(x => x.id !== pid)); await catat(me, 'Pembayaran dihapus', 'orders', str(id, 64)); });
 }
 
 /* ---------------- penjualan langsung (sparepart / unit AC tanpa jasa) — pemilik & admin ---------------- */
@@ -424,6 +537,7 @@ export async function simpanPenjualan(id: string | null, v: PenjualanInput): Pro
       tx.set(ref, { ...doc, fotoIds: [] });
       applyStock(tx, stokSnaps, old, { id: ref.id, ...doc });
     });
+    await catat(me, id ? 'Penjualan langsung diubah' : 'Penjualan langsung dibuat', 'orders', ref.id);
     return { id: ref.id };
   });
 }
@@ -451,6 +565,7 @@ function bacaTarif(raw: unknown): Tarif {
 export async function saveTarif(t: Tarif): Promise<Result> {
   return run('admin', async me => {
     await adminDb().doc('settings/tarif').set({ ...bacaTarif(t), diubah: { oleh: me.nama, at: Date.now() } });
+    await catat(me, 'Daftar harga diubah', '', '', '', 'Daftar harga');
   });
 }
 
@@ -458,13 +573,13 @@ export async function saveTarif(t: Tarif): Promise<Result> {
 /* Terbitkan invoice untuk order yang belum ditagih (instansi): nomor invoice dibuat menurut bulan tanggal invoice.
    jatuhTempo '' = tempo belum pasti. */
 export async function terbitkanInvoice(id: string, tglInvoice: string, jatuhTempo: string): Promise<ResultOf<{ invoice: string }>> {
-  return guarded('admin', async () => {
+  return guarded('admin', async me => {
     const tgl = str(tglInvoice, 10), jt = str(jatuhTempo, 10);
     if (!isDate(tgl)) throw new UserError('Tanggal invoice tidak valid.');
     if (jt && (!isDate(jt) || jt < tgl)) throw new UserError('Jatuh tempo tidak valid (harus sesudah tanggal invoice).');
     const db = adminDb();
     const ref = db.doc('orders/' + str(id, 64));
-    return db.runTransaction(async tx => {
+    const hasil = await db.runTransaction(async tx => {
       const s = await tx.get(ref);
       if (!s.exists) throw new UserError('Order tidak ditemukan.');
       const o = normOrder({ id: s.id, ...s.data() });
@@ -477,6 +592,8 @@ export async function terbitkanInvoice(id: string, tglInvoice: string, jatuhTemp
       tx.update(ref, { invoice, belumDitagih: false, tglInvoice: tgl, jatuhTempo: jt, updatedAt: Date.now() });
       return { invoice };
     });
+    await catat(me, 'Invoice diterbitkan', 'orders', str(id, 64), hasil.invoice);
+    return hasil;
   });
 }
 
@@ -501,6 +618,131 @@ export async function simpanInfoInvoice(id: string, v: InfoInvoiceInput): Promis
       };
       tx.update(ref, { inv, ...(tgl && !o.belumDitagih ? { tglInvoice: tgl } : {}), ...(!o.belumDitagih ? { jatuhTempo: jt } : {}), updatedAt: Date.now() });
     });
+    await catat(me, 'Isian invoice diubah', 'orders', str(id, 64));
+  });
+}
+
+/* ---------------- tim harian & rute ---------------- */
+/* simpan susunan tim satu tanggal; order tim itu ikut diperbarui anggotanya */
+export async function simpanTim(tanggal: string, tim: Tim[]): Promise<Result> {
+  return run('admin', async me => {
+    const tgl = str(tanggal, 10);
+    if (!isDate(tgl)) throw new UserError('Tanggal tidak valid.');
+    const db = adminDb();
+    const kar = new Set((await db.collection('karyawan').get()).docs.filter(d => !d.get('nonaktif')).map(d => d.id));
+    const dipakai = new Set<string>();
+    const bersih: Tim[] = (tim || []).slice(0, 20).map(t => {
+      const ketua = str(t.ketua, 64);
+      if (!kar.has(ketua)) throw new UserError('Ketua tim tidak ditemukan / nonaktif.');
+      const anggota = [...new Set((t.anggota || []).map(a => str(a, 64)))].filter(a => kar.has(a) && a !== ketua).slice(0, 6);
+      for (const id of [ketua, ...anggota]) { if (dipakai.has(id)) throw new UserError('Satu orang hanya boleh ada di satu tim per hari.'); dipakai.add(id); }
+      return { id: ketua, ketua, anggota, bisaBantu: !!t.bisaBantu };
+    });
+    await db.runTransaction(async tx => {
+      const os = await tx.get(db.collection('orders').where('tanggal', '==', tgl));
+      tx.set(db.doc('tim/' + tgl), { tanggal: tgl, tim: bersih });
+      for (const o of os.docs) {
+        const tid = o.get('timId');
+        if (!tid) continue;
+        const t = bersih.find(x => x.id === tid);
+        tx.update(o.ref, t ? { teknisi: anggotaTim(t), updatedAt: Date.now() } : { timId: '', rute: 0, updatedAt: Date.now() });
+      }
+    });
+    await catat(me, 'Susunan tim disimpan', 'tim', tgl);
+  });
+}
+
+/* pindahkan order ke tim (atau lepas dari tim) dan taruh di urutan ke-`posisi` (0 = paling atas); nomor rute diurutkan ulang */
+export async function aturRute(orderId: string, timId: string, posisi: number): Promise<Result> {
+  return run('admin', async me => {
+    const db = adminDb();
+    const ref = db.doc('orders/' + str(orderId, 64));
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new UserError('Order tidak ditemukan.');
+      const o = normOrder({ id: s.id, ...s.data() });
+      const ke = str(timId, 64);
+      const hari = await tx.get(db.doc('tim/' + o.tanggal));
+      const tim = ((hari.get('tim') || []) as Tim[]).find(t => t.id === ke);
+      if (ke && !tim) throw new UserError('Tim tujuan tidak ada di tanggal ini.');
+      const semua = (await tx.get(db.collection('orders').where('tanggal', '==', o.tanggal))).docs
+        .map(x => normOrder({ id: x.id, ...x.data() })).filter(x => x.id !== o.id && x.status !== 'Batal' && !x.jual);
+      const nama = async (id: string) => id ? ((await tx.get(db.doc('karyawan/' + id))).get('nama') || '') : '';
+      const dari = o.timId || '';
+      const [namaDari, namaKe] = dari !== ke ? [await nama(dari), await nama(ke)] : ['', ''];
+      /* urutan baru tim tujuan */
+      const tujuan = semua.filter(x => x.timId === ke).sort((a, b) => (a.rute || 999) - (b.rute || 999));
+      tujuan.splice(Math.max(0, Math.min(tujuan.length, Math.round(num(posisi)))), 0, o);
+      tujuan.forEach((x, i) => {
+        if (x.id === o.id) return;
+        if (x.rute !== i + 1) tx.update(db.doc('orders/' + x.id), { rute: i + 1 });
+      });
+      const idx = tujuan.findIndex(x => x.id === o.id);
+      tx.update(ref, {
+        timId: ke, rute: ke ? idx + 1 : 0, teknisi: tim ? anggotaTim(tim) : o.teknisi, updatedAt: Date.now(),
+        ...(dari !== ke ? {
+          kendala: null,
+          pindah: [...(o.pindah || []), { dari: namaDari ? 'Tim ' + namaDari : 'Tanpa tim', ke: namaKe ? 'Tim ' + namaKe : 'Tanpa tim', oleh: me.nama, at: Date.now(), alasan: o.kendala?.alasan || '' }].slice(-20),
+        } : {}),
+      });
+      /* rapikan nomor rute tim asal */
+      if (dari && dari !== ke) semua.filter(x => x.timId === dari).sort((a, b) => (a.rute || 999) - (b.rute || 999))
+        .forEach((x, i) => { if (x.rute !== i + 1) tx.update(db.doc('orders/' + x.id), { rute: i + 1 }); });
+    });
+    await catat(me, 'Rute diatur / dipindah', 'orders', str(orderId, 64));
+  });
+}
+
+/* jadwal ulang ke tanggal lain (lepas dari tim; riwayat tercatat) */
+export async function jadwalUlang(orderId: string, tanggal: string): Promise<Result> {
+  return run('admin', async me => {
+    const tgl = str(tanggal, 10);
+    if (!isDate(tgl)) throw new UserError('Tanggal tidak valid.');
+    const ref = adminDb().doc('orders/' + str(orderId, 64));
+    const s = await ref.get();
+    if (!s.exists) throw new UserError('Order tidak ditemukan.');
+    const o = normOrder({ id: s.id, ...s.data() });
+    await ref.update({
+      tanggal: tgl, timId: '', rute: 0, kendala: null, status: 'Terjadwal', updatedAt: Date.now(),
+      pindah: [...(o.pindah || []), { dari: fmtTgl(o.tanggal), ke: fmtTgl(tgl), oleh: me.nama, at: Date.now(), alasan: o.kendala?.alasan || 'Jadwal ulang' }].slice(-20),
+    });
+    await catat(me, 'Jadwal ulang', 'orders', str(orderId, 64), `ke ${fmtTglR(tgl)}`);
+  });
+}
+const fmtTgl = (t: string) => new Date(t + 'T00:00:00Z').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+/* tim lapangan melaporkan kendala (alasan kosong = batalkan laporan) */
+export async function laporKendala(orderId: string, alasan: string): Promise<Result> {
+  return run('karyawan', async me => {
+    const ref = adminDb().doc('orders/' + str(orderId, 64));
+    const s = await ref.get();
+    if (!s.exists) throw new UserError('Order tidak ditemukan.');
+    bolehOrder(me, normOrder({ id: s.id, ...s.data() }));
+    const a = str(alasan, 200);
+    await ref.update({ kendala: a ? { alasan: a, oleh: me.nama, at: Date.now() } : null, updatedAt: Date.now() });
+  });
+}
+
+/* tim memberi tanda siap menerima rute dari tim lain */
+export async function tandaBisaBantu(tanggal: string, bisa: boolean): Promise<Result> {
+  return run('karyawan', async me => {
+    const ref = adminDb().doc('tim/' + str(tanggal, 10));
+    await adminDb().runTransaction(async tx => {
+      const s = await tx.get(ref);
+      const tim = (s.get('tim') || []) as Tim[];
+      const t = tim.find(x => me.karyawanId && anggotaTim(x).includes(me.karyawanId));
+      if (!t && me.peran === 'karyawan') throw new UserError('Anda belum masuk tim hari ini.');
+      if (!t) return;
+      tx.update(ref, { tim: tim.map(x => (x.id === t.id ? { ...x, bisaBantu: !!bisa } : x)) });
+    });
+  });
+}
+
+/* pesan cepat WA teknisi → konsumen (diatur admin) */
+export async function savePesanCepat(list: { judul: string; teks: string }[]): Promise<Result> {
+  return run('admin', async () => {
+    const bersih = (list || []).slice(0, 8).map(x => ({ judul: str(x.judul, 40), teks: str(x.teks, 600) })).filter(x => x.judul && x.teks);
+    await adminDb().doc('settings/usaha').set({ pesanCepat: bersih.length ? bersih : PESAN_CEPAT }, { merge: true });
   });
 }
 
@@ -546,6 +788,13 @@ export async function teknisiLapor(id: string, v: { items: { layanan: string; un
       const old = normOrder({ id: s.id, ...s.data() });
       bolehOrder(me, old);
       if (old.status === 'Batal') throw new UserError('Order ini sudah dibatalkan admin.');
+      /* tambah pekerjaan & sparepart hanya ketua tim (teknisi); helper cukup catatan */
+      if (me.peran === 'karyawan' && (addItems.length || addParts.length)) {
+        const tim = old.timId ? ((await tx.get(db.doc('tim/' + old.tanggal))).get('tim') as Tim[] | undefined)?.find(t => t.id === old.timId) : undefined;
+        const k = me.karyawanId ? await tx.get(db.doc('karyawan/' + me.karyawanId)) : null;
+        const ketua = tim ? tim.ketua === me.karyawanId : !!k && posisiKaryawan({ posisi: k.get('posisi'), peran: k.get('peran') || '', akun: k.get('akun') }) === 'teknisi';
+        if (!ketua) throw new UserError('Tambah pekerjaan & sparepart dilakukan ketua tim (teknisi). Helper cukup kirim catatan.');
+      }
       const stokSnaps = await readStok(tx, [...idStok(old), ...addParts.map(p => p.itemId)]);
       /* harga dari daftar harga + PK/tipe unit yang dipilih; kalau tidak bisa otomatis, ditandai untuk diisi admin */
       const pSnap = old.pelangganId ? await tx.get(db.doc('pelanggan/' + old.pelangganId)) : null;
@@ -666,6 +915,7 @@ export async function buatRekap(pelangganId: string, bulan: string, orderIds: st
       /* order yang belum ditagih ikut tertagih lewat rekap ini */
       for (const s of snaps) tx.update(s.ref, { rekapId: ref.id, jatuhTempo, ...(s.get('belumDitagih') ? { belumDitagih: false, tglInvoice: todayWIB() } : {}), updatedAt: Date.now() });
     });
+    await catat(me, 'Tagihan gabungan dibuat', 'rekap', ref.id);
     return { id: ref.id };
   });
 }
@@ -692,12 +942,13 @@ export async function bayarRekap(rekapId: string, v: { tanggal: string; jumlah: 
         tx.update(db.doc('orders/' + o.id), { pembayaran, dibayar, bayar, paidAt: bayar === 'Lunas' ? tanggal : null, updatedAt: Date.now() });
       }
     });
+    await catat(me, 'Pembayaran tagihan gabungan', 'rekap', str(rekapId, 64), rp(jumlah));
   });
 }
 
 /* batalkan rekap (khusus pemilik): order kembali ditagih sendiri-sendiri; pembayaran yang sudah ada tetap */
 export async function batalRekap(rekapId: string): Promise<Result> {
-  return run('owner', async () => {
+  return run('owner', async me => {
     const db = adminDb();
     await db.runTransaction(async tx => {
       const ref = db.doc('rekap/' + str(rekapId, 64));
@@ -707,6 +958,7 @@ export async function batalRekap(rekapId: string): Promise<Result> {
       for (const s of snaps) if (s.exists && s.get('rekapId') === r.id) tx.update(s.ref, { rekapId: '', updatedAt: Date.now() });
       tx.delete(ref);
     });
+    await catat(me, 'Tagihan gabungan dibatalkan', 'rekap', str(rekapId, 64));
   });
 }
 
@@ -787,20 +1039,24 @@ export async function savePelanggan(id: string | null, v: PelangganInput): Promi
       };
       if (id) tx.update(ref, doc); else tx.set(ref, { ...doc, createdAt: Date.now() });
     });
+    await catat(me, id ? 'Data pelanggan diubah' : 'Pelanggan ditambah', 'pelanggan', ref.id);
     return { id: ref.id };
   });
 }
 
 /* hapus data pelanggan — khusus pemilik; order lama tetap ada (nama tersimpan di order); stiker unitnya kembali kosong */
 export async function hapusPelanggan(id: string): Promise<Result> {
-  return run('owner', async () => {
+  return run('owner', async me => {
     const db = adminDb();
     const ref = db.doc('pelanggan/' + str(id, 64));
     await db.runTransaction(async tx => {
       const s = await tx.get(ref);
+      if (!s.exists) return;
       for (const u of (s.get('units') || []) as UnitAC[]) if (u.kode) tx.set(db.doc('stiker/' + u.kode), { status: 'kosong', pelangganId: FieldValue.delete(), unitId: FieldValue.delete() }, { merge: true });
+      keSampah(tx, me, 'pelanggan', s.id, s.data(), s.get('nama') || 'Pelanggan');
       tx.delete(ref);
     });
+    await catat(me, 'Pelanggan dihapus (ke tempat sampah)', 'pelanggan', str(id, 64), '', '');
   });
 }
 
@@ -1042,6 +1298,7 @@ export async function saveStok(id: string | null, v: StokInput): Promise<Result>
         if (!roll && s.get('roll') && lama.length) { doc.qty = r3((+s.get('qty') || 0) + sum(lama)); doc.rolls = []; }
         tx.update(ref, doc);
       });
+      await catat(me, 'Barang stok diubah', 'stok', ref.id, '', nama);
       return;
     }
     const qty = r3(Math.max(0, num(v.qty)));
@@ -1055,11 +1312,24 @@ export async function saveStok(id: string | null, v: StokInput): Promise<Result>
       ket: 'Stok awal' + (rolls.length ? ` · ${fmtRoll(rolls)}${qty ? ` + ${qty.toLocaleString('id-ID')} eceran` : ''}` : ''),
     });
     await batch.commit();
+    await catat(me, 'Barang stok ditambah', 'stok', '', '', nama);
   });
 }
 
 export async function deleteStok(id: string): Promise<Result> {
-  return run('owner', async () => { await adminDb().doc('stok/' + str(id, 64)).delete(); });
+  return run('owner', async me => {
+    const db = adminDb();
+    const ref = db.doc('stok/' + str(id, 64));
+    let nama = '';
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) return;
+      nama = s.get('nama') || '';
+      keSampah(tx, me, 'stok', s.id, s.data(), nama);
+      tx.delete(ref);
+    });
+    await catat(me, 'Barang stok dihapus (ke tempat sampah)', 'stok', str(id, 64), '', nama);
+  });
 }
 
 /* qty = tambahan eceran/jumlah biasa; rolls = roll utuh yang masuk (khusus barang roll). harga = harga beli per satuan */
@@ -1083,6 +1353,7 @@ export async function stokMasuk(id: string, qty: number, harga: number, ket: str
         ket: [rinci, str(ket, 200)].filter(Boolean).join(' · '),
       });
     });
+    await catat(me, 'Stok masuk', 'stok', str(id, 64), `+${q}${rolls.length ? ` + ${rolls.length} roll` : ''}`);
   });
 }
 
@@ -1106,7 +1377,7 @@ export async function bukaRoll(id: string, idx: number): Promise<Result> {
 
 /* hitung ulang: qty = jumlah/eceran hasil hitung fisik; rolls = daftar roll utuh hasil hitung (khusus barang roll) */
 export async function stokKoreksi(id: string, qty: number, ket: string, rolls?: number[]): Promise<Result> {
-  return run('admin', async () => {
+  return run('admin', async me => {
     const q = r3(Math.max(0, num(qty)));
     const db = adminDb();
     const ref = db.doc('stok/' + str(id, 64));
@@ -1123,21 +1394,25 @@ export async function stokKoreksi(id: string, qty: number, ket: string, rolls?: 
         ket: [str(ket, 200) || 'Hitung ulang', rinci].filter(Boolean).join(' · '),
       });
     });
+    await catat(me, 'Stok dihitung ulang', 'stok', str(id, 64), `eceran/jumlah jadi ${q}`);
   });
 }
 
 /* ---------------- karyawan & akun login nomor HP ---------------- */
-type KaryawanInput = { nama: string; peran: string; hp: string; nonaktif: boolean; liburMingguan: number[] };
+type KaryawanInput = { nama: string; peran: string; hp: string; nonaktif: boolean; liburMingguan: number[]; posisi?: string; bisaKetua?: boolean; urutan?: number };
 
 export async function saveKaryawan(id: string | null, v: KaryawanInput): Promise<Result> {
-  return run('admin', async () => {
+  return run('admin', async me => {
     const nama = str(v.nama, 80);
     if (!nama) throw new UserError('Nama wajib diisi.');
     const libur = [...new Set((v.liburMingguan || []).map(Number).filter(h => h >= 0 && h <= 6))].sort();
-    const doc = { nama, peran: str(v.peran, 60), hp: str(v.hp, 30), nonaktif: !!v.nonaktif, liburMingguan: libur };
+    const posisi = v.posisi && v.posisi in POSISI ? v.posisi : 'lainnya';
+    const doc = { nama, peran: str(v.peran, 60) || POSISI[posisi as keyof typeof POSISI], hp: str(v.hp, 30), nonaktif: !!v.nonaktif, liburMingguan: libur,
+      posisi, bisaKetua: posisi === 'helper' && !!v.bisaKetua, urutan: Math.max(0, Math.min(999, Math.round(num(v.urutan)))) };
     const db = adminDb();
     if (id) await db.doc('karyawan/' + str(id, 64)).update(doc);
     else await db.collection('karyawan').add({ ...doc, akun: null, createdAt: Date.now() });
+    await catat(me, id ? 'Data karyawan diubah' : 'Karyawan ditambah', 'karyawan', id || '', '', nama);
   });
 }
 
@@ -1166,13 +1441,13 @@ async function karyawanUntukAkun(me: Me, kid: string) {
   return k;
 }
 
-export async function buatAkun(kid: string, hp: string, password: string, peran: 'admin' | 'karyawan'): Promise<Result> {
+export async function buatAkun(kid: string, hp: string, password: string, peran: 'admin' | 'karyawan' | 'layar'): Promise<Result> {
   return run('admin', async me => {
-    if (peran === 'admin' && me.peran !== 'owner') throw new UserError('Hanya pemilik yang bisa membuat akun admin.');
+    if (peran !== 'karyawan' && me.peran !== 'owner') throw new UserError('Hanya pemilik yang bisa membuat akun admin / perangkat absen.');
     const k = await karyawanUntukAkun(me, kid);
     if (k.akun) throw new UserError('Karyawan ini sudah punya akun login.');
     const nohp = cekHp(hp), pin = cekPin(password);
-    const role = peran === 'admin' ? 'admin' : 'karyawan';
+    const role = peran === 'admin' || peran === 'layar' ? peran : 'karyawan';
     const db = adminDb();
     const dup = await db.collection('akun').where('hp', '==', nohp).limit(1).get();
     if (!dup.empty) throw new UserError('Nomor HP ini sudah dipakai akun lain.');
@@ -1187,6 +1462,7 @@ export async function buatAkun(kid: string, hp: string, password: string, peran:
     batch.set(db.doc('akun/' + uid), { peran: role, karyawanId: k.id, nama: k.nama, username: nohp, hp: nohp, pinSalt: salt, pinHash: hash, gagal: 0, createdAt: Date.now(), oleh: me.nama });
     batch.update(db.doc('karyawan/' + k.id), { akun: { uid, username: nohp, peran: role } });
     await batch.commit();
+    await catat(me, 'Akun login dibuat', 'karyawan', k.id, `peran ${role}`);
   });
 }
 
@@ -1199,6 +1475,7 @@ export async function resetPassword(kid: string, password: string): Promise<Resu
     await adminDb().doc('akun/' + k.akun.uid).update({ pinSalt: salt, pinHash: hash, gagal: 0, lockUntil: 0 });
     try { await (await clerkClient()).users.updateUser(k.akun.uid, { password: passwordAcak(), skipPasswordChecks: true, signOutOfOtherSessions: true }); }
     catch (e) { console.error(e); /* PIN sudah diganti; gagal logout paksa tidak fatal */ }
+    await catat(me, 'PIN diganti', 'karyawan', k.id);
   });
 }
 
@@ -1241,13 +1518,32 @@ export async function hapusAkun(kid: string): Promise<Result> {
     batch.delete(db.doc('akun/' + k.akun.uid));
     batch.update(db.doc('karyawan/' + k.id), { akun: null });
     await batch.commit();
+    await catat(me, 'Akun login dihapus', 'karyawan', k.id);
   });
 }
 
 /* ---------------- absensi ---------------- */
 /* Token QR untuk Layar Absen (pemilik/admin). Berganti tiap 30 detik. */
 export async function qrToken(): Promise<ResultOf<{ token: string; sisa: number }>> {
-  return guarded('admin', async () => buatTokenQR(), true);
+  /* pemilik, admin, atau akun perangkat absen — karyawan tidak boleh membuat QR sendiri */
+  return guarded('layar', async me => { if (me.peran === 'karyawan') throw new UserError('Layar Absen hanya untuk pemilik, admin, atau perangkat absen.'); return buatTokenQR(); }, true);
+}
+
+/* pemilik: ubah peran akun login (mis. akun uji jadi perangkat absen) */
+export async function ubahPeranAkun(kid: string, peran: 'admin' | 'karyawan' | 'layar'): Promise<Result> {
+  return run('owner', async me => {
+    if (!['admin', 'karyawan', 'layar'].includes(peran)) throw new UserError('Peran tidak dikenal.');
+    const db = adminDb();
+    const kref = db.doc('karyawan/' + str(kid, 64));
+    const k = await kref.get();
+    const akun = k.get('akun') as Karyawan['akun'];
+    if (!k.exists || !akun) throw new UserError('Karyawan ini belum punya akun login.');
+    const batch = db.batch();
+    batch.update(db.doc('akun/' + akun.uid), { peran });
+    batch.update(kref, { akun: { ...akun, peran }, ...(peran === 'layar' ? { posisi: 'perangkat' } : {}) });
+    await batch.commit();
+    await catat(me, 'Peran akun diubah', 'karyawan', str(kid, 64), `jadi ${peran}`);
+  });
 }
 
 /* Karyawan scan QR di bengkel: cek token, cek GPS ≤ radius, lalu catat masuk (atau pulang kalau sudah masuk). */
@@ -1302,6 +1598,72 @@ export async function absenManual(kid: string, tanggal: string, v: AbsRecord): P
       tx.set(ref, { tanggal, records });
     });
     await arsipKoreksi(tanggal, (await db.doc('karyawan/' + kid).get()).get('nama') || kid, rec, me.nama);
+    await catat(me, 'Absensi diinput / dikoreksi', 'karyawan', kid, `${fmtTglR(tanggal)}: ${status} — ${ket}`);
+  });
+}
+
+/* ---------------- pengajuan izin / sakit ---------------- */
+const hariAntara = (dari: string, sampai: string) => { const out: string[] = []; for (let t = dari; t <= sampai && out.length < 31; t = addDays(t, 1)) out.push(t); return out; };
+
+/* karyawan mengajukan izin/sakit untuk dirinya; untuk hari ini paling lambat sebelum jam masuk */
+export async function ajukanIzin(v: { dari: string; sampai: string; jenis: string; alasan: string }): Promise<Result> {
+  return run('karyawan', async me => {
+    if (!me.karyawanId) throw new UserError('Akun ini belum terhubung ke data karyawan.');
+    const dari = str(v.dari, 10), sampai = str(v.sampai, 10) || dari, alasan = str(v.alasan, 300);
+    if (!isDate(dari) || !isDate(sampai) || sampai < dari) throw new UserError('Tanggal tidak valid.');
+    if (hariAntara(dari, sampai).length > 14) throw new UserError('Maksimal 14 hari per pengajuan.');
+    const today = todayWIB();
+    if (dari < today) throw new UserError('Tanggal yang sudah lewat tidak bisa diajukan. Hubungi admin.');
+    const db = adminDb();
+    const st = ((await db.doc('settings/usaha').get()).data() || {}) as Settings;
+    if (dari === today && nowTimeWIB() >= jamMasukTgl(st, today))
+      throw new UserError(`Pengajuan untuk hari ini paling lambat sebelum jam masuk (${jamMasukTgl(st, today)}). Hubungi admin langsung.`);
+    if (!alasan) throw new UserError('Tuliskan alasannya.');
+    const k = await db.doc('karyawan/' + me.karyawanId).get();
+    await db.collection('izin').add({
+      kid: me.karyawanId, nama: k.get('nama') || me.nama, dari, sampai, jenis: JENIS_IZIN.includes(v.jenis as never) ? v.jenis : 'Izin',
+      alasan, status: 'menunggu', at: Date.now(),
+    });
+  });
+}
+
+/* karyawan membatalkan pengajuannya yang belum diputuskan */
+export async function batalIzin(id: string): Promise<Result> {
+  return run('karyawan', async me => {
+    const ref = adminDb().doc('izin/' + str(id, 64));
+    const s = await ref.get();
+    if (!s.exists) return;
+    if (s.get('kid') !== me.karyawanId && me.peran === 'karyawan') throw new UserError('Bukan pengajuan Anda.');
+    if (s.get('status') !== 'menunggu') throw new UserError('Pengajuan sudah diputuskan, tidak bisa dibatalkan.');
+    await ref.delete();
+  });
+}
+
+/* pemilik/admin menyetujui atau menolak; kalau disetujui, absensi tanggal-tanggal itu jadi Sakit/Izin */
+export async function putuskanIzin(id: string, setuju: boolean): Promise<Result> {
+  return run('admin', async me => {
+    const db = adminDb();
+    const ref = db.doc('izin/' + str(id, 64));
+    const s = await ref.get();
+    if (!s.exists) throw new UserError('Pengajuan tidak ditemukan.');
+    const iz = { id: s.id, ...s.data() } as Izin;
+    if (me.peran !== 'owner' && iz.kid === me.karyawanId) throw new UserError('Pengajuan Anda sendiri diputuskan oleh pemilik.');
+    if (iz.status !== 'menunggu') throw new UserError('Pengajuan ini sudah diputuskan.');
+    await ref.update({ status: setuju ? 'disetujui' : 'ditolak', diputus: { oleh: me.nama, at: Date.now() } });
+    await catat(me, setuju ? 'Izin disetujui' : 'Izin ditolak', 'izin', iz.id);
+    if (!setuju) return;
+    const status = iz.jenis === 'Sakit' ? 'Sakit' : 'Izin';
+    for (const tgl of hariAntara(iz.dari, iz.sampai)) {
+      const aref = db.doc('absensi/' + tgl);
+      const rec: AbsRecord = { status, ket: `${iz.jenis}: ${iz.alasan}`, via: 'Pengajuan', oleh: me.nama };
+      const ditulis = await db.runTransaction(async tx => {
+        const records = ((await tx.get(aref)).get('records') || {}) as Record<string, AbsRecord>;
+        if (records[iz.kid]?.status === 'Hadir') return false; // sudah terlanjur masuk kerja → tidak ditimpa
+        tx.set(aref, { tanggal: tgl, records: { ...records, [iz.kid]: rec } });
+        return true;
+      });
+      if (ditulis && tgl < todayWIB()) await arsipKoreksi(tgl, iz.nama, rec, me.nama);
+    }
   });
 }
 
@@ -1316,6 +1678,7 @@ export async function hapusAbsen(kid: string, tanggal: string): Promise<Result> 
       const s = await tx.get(ref);
       if (!s.exists) return;
       const records = { ...((s.get('records') || {}) as Record<string, AbsRecord>) };
+      if (records[kid]) keSampah(tx, me, 'absensi', tanggal, records[kid], `Absensi ${fmtTglR(tanggal)}`, { kid });
       delete records[kid];
       tx.set(ref, { tanggal, records });
     });
@@ -1365,12 +1728,21 @@ export async function setCatatanDone(id: string, done: boolean): Promise<Result>
   });
 }
 export async function deleteCatatan(id: string): Promise<Result> {
-  return run('admin', async () => { await adminDb().doc('catatan/' + str(id, 64)).delete(); });
+  return run('admin', async me => {
+    const db = adminDb();
+    const ref = db.doc('catatan/' + str(id, 64));
+    await db.runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if (!s.exists) return;
+      keSampah(tx, me, 'catatan', s.id, s.data(), s.get('judul') || 'Catatan');
+      tx.delete(ref);
+    });
+  });
 }
 
 /* ---------------- pengaturan (pemilik) ---------------- */
 export async function saveSettings(v: Settings): Promise<Result> {
-  return run('owner', async () => {
+  return run('owner', async me => {
     const jamMasuk = str(v.jamMasuk, 5) || '08:00', jamMasukMinggu = str(v.jamMasukMinggu, 5);
     if (!isTime(jamMasuk) || !isTime(jamMasukMinggu)) throw new UserError('Jam masuk tidak valid.');
     await adminDb().doc('settings/usaha').set({
@@ -1379,6 +1751,7 @@ export async function saveSettings(v: Settings): Promise<Result> {
       rekeningInstansi: str(v.rekeningInstansi, 1000), penanggungJawab: str(v.penanggungJawab, 80), jabatan: str(v.jabatan, 60),
       email: str(v.email, 120), npwp: str(v.npwp, 40),
     }, { merge: true }); // merge: kolom lain (mis. template ajakan form) tidak ikut terhapus
+    await catat(me, 'Pengaturan usaha diubah', '', '', '', 'Pengaturan');
   });
 }
 
