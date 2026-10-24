@@ -53,7 +53,7 @@ export function PapanRute() {
           return (
             <div key={k.id || 'tanpa'} className="panel" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8, alignSelf: 'start' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
-                <div><b>{k.judul}</b>{k.t && <div className="sm">{nama(k.t.ketua)} (ketua){k.t.anggota.length ? ' · ' + k.t.anggota.map(nama).join(', ') : ''}</div>}</div>
+                <div><b>{k.judul}</b>{k.t && <div className="sm">{nama(k.t.ketua)} (teknisi){k.t.anggota.length ? ' · ' + k.t.anggota.map(nama).join(', ') : ''}</div>}</div>
                 {k.list.length > 0 && <span className={`pill ${selesai === k.list.length ? 'good' : ''}`}>{selesai}/{k.list.length} selesai</span>}
               </div>
               {k.t?.bisaBantu && <span className="pill good" style={{ alignSelf: 'flex-start' }}>✋ Siap bantu rute lain</span>}
@@ -108,17 +108,17 @@ export function AturTimDialog({ tanggal, onClose }: { tanggal: string; onClose: 
   const set = (i: number, patch: Partial<Tim>) => setTim(ts => ts.map((t, j) => (j === i ? { ...t, ...patch, id: patch.ketua ?? t.ketua } : t)));
   return (
     <FormDialog title={`Atur tim · ${fmtLong(tanggal)}`} onClose={onClose} submitLabel="Simpan tim"
-      onSubmit={() => (tim.some(t => !t.ketua) ? (toast.error('Pilih ketua untuk setiap tim.'), Promise.resolve(false)) : run(simpanTim(tanggal, tim), 'Susunan tim disimpan'))}>
+      onSubmit={() => (tim.some(t => !t.ketua) ? (toast.error('Pilih teknisi untuk setiap tim.'), Promise.resolve(false)) : run(simpanTim(tanggal, tim), 'Susunan tim disimpan'))}>
       <div className="actions"><Button type="button" size="sm" variant="outline" onClick={salin}>⟳ Salin tim kemarin</Button><span className="hint">Urutan tim mengikuti urutan teknisi di data karyawan.</span></div>
       {tim.map((t, i) => {
         const pakai = dipakai(t.id);
         return (
           <fieldset key={i} className="box">
             <legend>{t.ketua ? namaTim(t, d.karyawan) : `Tim ${i + 1}`}</legend>
-            <label className="lbl">Ketua tim (teknisi)
+            <label className="lbl">Teknisi
               <select className="field" value={t.ketua} onChange={e => set(i, { ketua: e.target.value, anggota: t.anggota.filter(a => a !== e.target.value) })}>
                 <option value="">Pilih…</option>
-                {calonKetua.filter(k => !pakai.has(k.id) || k.id === t.ketua).map(k => <option key={k.id} value={k.id}>{k.nama}{posisiKaryawan(k) === 'helper' ? ' (helper, teknisi dadakan)' : ''}</option>)}
+                {calonKetua.filter(k => !pakai.has(k.id) || k.id === t.ketua).map(k => <option key={k.id} value={k.id}>{k.nama}{posisiKaryawan(k) === 'helper' ? ' (teknisi pengganti)' : ''}</option>)}
               </select>
             </label>
             <div className="lbl">Anggota (helper)
@@ -188,7 +188,7 @@ export function RuteSaya() {
       <div className="panel" style={{ background: 'linear-gradient(135deg, #123a9c, #1d4fc4)', color: '#fff', border: 0, marginBottom: 14 }}>
         <b style={{ fontSize: '1.15rem' }}>Halo bang {saya?.nama || d.me.nama} 👋</b>
         <div style={{ opacity: .9, fontSize: '.85rem', marginTop: 2 }}>
-          {saya ? (tim ? `${ketua ? 'Ketua' : 'Anggota'} · ${namaTim(tim, d.karyawan)}${anggotaTim(tim).length > 1 ? ' (bersama ' + anggotaTim(tim).filter(x => x !== kid).map(x => d.karyawan.find(k => k.id === x)?.nama || '').join(', ') + ')' : ''}` : 'Belum masuk tim hari ini') : ''}
+          {saya ? (tim ? `${ketua ? 'Teknisi' : 'Helper'} · ${namaTim(tim, d.karyawan)}${anggotaTim(tim).length > 1 ? ' (bersama ' + anggotaTim(tim).filter(x => x !== kid).map(x => d.karyawan.find(k => k.id === x)?.nama || '').join(', ') + ')' : ''}` : 'Belum masuk tim hari ini') : ''}
         </div>
         <div style={{ fontWeight: 700, marginTop: 6 }}>Rute hari ini: {hariIni.length} · selesai {selesai}</div>
       </div>

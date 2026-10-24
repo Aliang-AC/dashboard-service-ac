@@ -633,7 +633,7 @@ export async function simpanTim(tanggal: string, tim: Tim[]): Promise<Result> {
     const dipakai = new Set<string>();
     const bersih: Tim[] = (tim || []).slice(0, 20).map(t => {
       const ketua = str(t.ketua, 64);
-      if (!kar.has(ketua)) throw new UserError('Ketua tim tidak ditemukan / nonaktif.');
+      if (!kar.has(ketua)) throw new UserError('Teknisi tim tidak ditemukan / nonaktif.');
       const anggota = [...new Set((t.anggota || []).map(a => str(a, 64)))].filter(a => kar.has(a) && a !== ketua).slice(0, 6);
       for (const id of [ketua, ...anggota]) { if (dipakai.has(id)) throw new UserError('Satu orang hanya boleh ada di satu tim per hari.'); dipakai.add(id); }
       return { id: ketua, ketua, anggota, bisaBantu: !!t.bisaBantu };
@@ -793,7 +793,7 @@ export async function teknisiLapor(id: string, v: { items: { layanan: string; un
         const tim = old.timId ? ((await tx.get(db.doc('tim/' + old.tanggal))).get('tim') as Tim[] | undefined)?.find(t => t.id === old.timId) : undefined;
         const k = me.karyawanId ? await tx.get(db.doc('karyawan/' + me.karyawanId)) : null;
         const ketua = tim ? tim.ketua === me.karyawanId : !!k && posisiKaryawan({ posisi: k.get('posisi'), peran: k.get('peran') || '', akun: k.get('akun') }) === 'teknisi';
-        if (!ketua) throw new UserError('Tambah pekerjaan & sparepart dilakukan ketua tim (teknisi). Helper cukup kirim catatan.');
+        if (!ketua) throw new UserError('Tambah pekerjaan & sparepart dilakukan teknisi tim. Helper cukup kirim catatan.');
       }
       const stokSnaps = await readStok(tx, [...idStok(old), ...addParts.map(p => p.itemId)]);
       /* harga dari daftar harga + PK/tipe unit yang dipilih; kalau tidak bisa otomatis, ditandai untuk diisi admin */

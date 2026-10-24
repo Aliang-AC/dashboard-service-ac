@@ -162,7 +162,7 @@ function AbsensiStaff() {
                   <div className="main">
                     <b style={hariOff(d, k.id, month) > BATAS_OFF ? { color: 'var(--bad)' } : undefined}>{k.nama}</b>{k.nonaktif && <> <span className="pill">nonaktif</span></>}{hariOff(d, k.id, month) > BATAS_OFF && <> <span className="pill bad">off {hariOff(d, k.id, month)}×</span></>}
                     {k.akun ? <> <span className={`pill ${k.akun.peran === 'admin' ? 'accent' : 'brand'}`}>{k.akun.peran === 'admin' ? 'Admin' : k.akun.peran === 'layar' ? 'Perangkat absen' : 'Karyawan'} · {k.akun.username}</span></> : <> <span className="pill warn">Belum punya akun</span></>}
-                    <div className="meta">{POSISI[posisiKaryawan(k)]}{k.peran && k.peran !== POSISI[posisiKaryawan(k)] ? ` (${k.peran})` : ''}{posisiKaryawan(k) === 'teknisi' && k.urutan ? ` · urutan tim ${k.urutan}` : ''}{k.bisaKetua ? ' · bisa jadi ketua tim' : ''}{k.hp ? ' · ' + k.hp : ''}{k.liburMingguan?.length ? ' · libur rutin: ' + k.liburMingguan.map(h => HARI[h]).join(', ') : ''}</div>
+                    <div className="meta">{POSISI[posisiKaryawan(k)]}{k.peran && k.peran !== POSISI[posisiKaryawan(k)] ? ` (${k.peran})` : ''}{posisiKaryawan(k) === 'teknisi' && k.urutan ? ` · urutan tim ${k.urutan}` : ''}{k.bisaKetua ? ' · bisa jadi teknisi pengganti' : ''}{k.hp ? ' · ' + k.hp : ''}{k.liburMingguan?.length ? ' · libur rutin: ' + k.liburMingguan.map(h => HARI[h]).join(', ') : ''}</div>
                   </div>
                   <span className="actions">
                     {!kunci && <Button size="sm" variant={k.akun ? 'outline' : 'default'} onClick={() => open({ kind: 'akun', id: k.id })}>{k.akun ? 'Akun' : 'Buat akun'}</Button>}
@@ -327,10 +327,10 @@ export function KarDialog({ id, onClose }: { id?: string; onClose: () => void })
         {posisi === 'helper' && (
           <label className="span2" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <input type="checkbox" name="bisaKetua" defaultChecked={!!k?.bisaKetua} style={{ marginTop: 4 }} />
-            <span><b>Bisa jadi ketua tim</b> (teknisi dadakan) — saat dibutuhkan, admin bisa membentuk tim atas namanya.</span>
+            <span><b>Bisa jadi teknisi pengganti</b> — saat tim lapangan masuk semua & order sedang banyak, admin bisa membentuk tim dengan dia sebagai teknisinya.</span>
           </label>
         )}
-        {posisi === 'helper' && k?.bisaKetua && <label className="lbl">Urutan tim saat jadi ketua<input className="field" type="number" name="urutan" min={1} max={99} defaultValue={k?.urutan || ''} /></label>}
+        {posisi === 'helper' && k?.bisaKetua && <label className="lbl">Urutan tim saat jadi teknisi<input className="field" type="number" name="urutan" min={1} max={99} defaultValue={k?.urutan || ''} /></label>}
         <label className="lbl">No. HP<input className="field" name="hp" inputMode="tel" defaultValue={k?.hp || ''} placeholder="0812…" /></label>
         <fieldset className="box span2">
           <legend>Libur rutin tiap minggu</legend>
