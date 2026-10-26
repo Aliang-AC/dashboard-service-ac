@@ -108,6 +108,7 @@ export async function pulihkanSampah(id: string): Promise<Result> {
           const stokSnaps = await readStok(tx, idStok(o));
           applyStock(tx, stokSnaps, null, o);
         }
+        if (koleksi === 'karyawan') data.akun = null; // akun login sudah dihapus; buatkan ulang bila perlu
         if (koleksi === 'pelanggan') {
           /* stiker unit dipasang lagi kalau masih kosong; kalau sudah dipakai unit lain, kodenya dilepas */
           const units = ((data.units || []) as UnitAC[]).map(u => ({ ...u }));
@@ -1529,6 +1530,30 @@ export async function hapusAkun(kid: string): Promise<Result> {
     batch.update(db.doc('karyawan/' + k.id), { akun: null });
     await batch.commit();
     await catat(me, 'Akun login dihapus', 'karyawan', k.id);
+  });
+}
+
+/* pemilik: hapus karyawan yang sudah nonaktif. Data karyawan masuk tempat sampah (bisa dipulihkan 30 hari
+   atau dihapus permanen di menu Riwayat & Sampah); akun loginnya ikut dihapus. Catatan absensi lama tetap ada di arsip Sheet. */
+export async function hapusKaryawan(kid: string): Promise<Result> {
+  return run('owner', async me => {
+    const db = adminDb();
+    const ref = db.doc('karyawan/' + str(kid, 64));
+    const s = await ref.get();
+    if (!s.exists) return;
+    if (!s.get('nonaktif')) throw new UserError('Nonaktifkan karyawan ini dulu, baru bisa dihapus.');
+    const akun = s.get('akun') as Karyawan['akun'];
+    if (akun?.uid) {
+      try { await (await clerkClient()).users.deleteUser(akun.uid); } catch (e) { console.error(e); /* akun mungkin sudah terhapus di Clerk */ }
+      await db.doc('akun/' + akun.uid).delete();
+    }
+    await db.runTransaction(async tx => {
+      const x = await tx.get(ref);
+      if (!x.exists) return;
+      keSampah(tx, me, 'karyawan', x.id, { ...x.data(), akun: null }, x.get('nama') || 'Karyawan');
+      tx.delete(ref);
+    });
+    await catat(me, 'Karyawan dihapus (ke tempat sampah)', 'karyawan', s.id, akun ? 'akun login ikut dihapus' : '', s.get('nama') || '');
   });
 }
 

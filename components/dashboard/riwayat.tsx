@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { hapusPermanen, pulihkanSampah } from '@/app/actions';
 import { useDash } from './ctx';
 
-const JENIS: Record<string, string> = { orders: 'Order / penjualan', pelanggan: 'Pelanggan', stok: 'Barang stok', catatan: 'Catatan', absensi: 'Absensi' };
+const JENIS: Record<string, string> = { orders: 'Order / penjualan', pelanggan: 'Pelanggan', stok: 'Barang stok', catatan: 'Catatan', absensi: 'Absensi', karyawan: 'Karyawan' };
 const PERAN: Record<string, string> = { owner: 'Pemilik', admin: 'Admin', karyawan: 'Karyawan', layar: 'Perangkat' };
 const waktu = (at: number) => new Date(at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium', timeStyle: 'short' });
 

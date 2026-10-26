@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { absenManual, buatAkun, hapusAbsen, hapusAkun, liburSemua, resetPassword, saveKaryawan, ubahPeranAkun } from '@/app/actions';
+import { absenManual, buatAkun, hapusAbsen, hapusAkun, hapusKaryawan, liburSemua, resetPassword, saveKaryawan, ubahPeranAkun } from '@/app/actions';
 import { ABS_CLS, karName } from '@/lib/derive';
 import { addDays, fmtD, fmtLong, fmtMonth, monthKey } from '@/lib/format';
 import { ABS_ST, HARI, jamMasukTgl, POSISI, posisiKaryawan, type AbsRecord, type AbsStatus, type AllData, type Karyawan, type Posisi } from '@/lib/types';
@@ -310,6 +310,7 @@ export function KarDialog({ id, onClose }: { id?: string; onClose: () => void })
   const [posisi, setPosisi] = useState<Posisi>(k ? posisiKaryawan(k) : 'helper');
   return (
     <FormDialog wide={false} title={k ? 'Ubah karyawan' : 'Karyawan baru'} onClose={onClose}
+      onDelete={k?.nonaktif && d.me.peran === 'owner' ? () => run(hapusKaryawan(k.id), `${k.nama} dihapus — bisa dipulihkan 30 hari di Riwayat & Sampah`) : undefined}
       onSubmit={form => {
         const f = formObj(form);
         const libur = [...new FormData(form).getAll('libur')].map(Number);
@@ -347,6 +348,9 @@ export function KarDialog({ id, onClose }: { id?: string; onClose: () => void })
           <label className="lbl span2" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <input type="checkbox" name="nonaktif" defaultChecked={!!k.nonaktif} /> Nonaktif (sudah tidak bekerja)
           </label>
+        )}
+        {k?.nonaktif && d.me.peran === 'owner' && (
+          <p className="hint span2" style={{ margin: 0 }}>Karyawan nonaktif bisa dihapus dengan tombol <b>Hapus</b> di bawah. Datanya masuk <b>Riwayat &amp; Sampah</b> (bisa dipulihkan 30 hari, atau hapus permanen di sana); akun loginnya ikut dihapus.</p>
         )}
       </div>
     </FormDialog>

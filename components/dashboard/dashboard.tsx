@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
 import { UserButton } from '@clerk/nextjs';
@@ -125,6 +125,35 @@ export function Dashboard() {
   const judulTab = menu.flatMap(g => g.items).find(i => i.key === tab)?.label || '';
   const [modal, setModal] = useState<Modal | null>(null);
   const [invSel, setInvSel] = useState<string | null>(null);
+
+  /* Tombol Kembali (HP): tutup jendela/menu yang terbuka dulu; untuk keluar dari aplikasi harus ditekan 2× dalam 2 detik. */
+  const terbuka = useRef(false);
+  useEffect(() => { terbuka.current = !!modal || laci; }, [modal, laci]);
+  useEffect(() => {
+    /* Satu "penahan" di riwayat browser: Kembali pertama hanya melepas penahan (aplikasi tetap terbuka) dan
+       memunculkan pesan; Kembali kedua dalam 2 detik benar-benar keluar. Chrome mengabaikan penahan yang dipasang
+       tanpa sentuhan pengguna, jadi penahan dipasang saat pengguna menyentuh / mengetik di dashboard. */
+    let ada = false, siap = 0;
+    let tunda: ReturnType<typeof setTimeout> | undefined;
+    const tahan = () => { if (!ada && Date.now() >= siap) { history.pushState({ sac: 1 }, ''); ada = true; } };
+    const onPop = () => {
+      clearTimeout(tunda);
+      ada = false;
+      if (terbuka.current) { setModal(null); setLaci(false); tahan(); return; }
+      toast('Tekan kembali sekali lagi untuk keluar', { duration: 2000 });
+      siap = Date.now() + 2000; // selama 2 detik penahan tidak dipasang lagi → Kembali berikutnya keluar
+      tunda = setTimeout(tahan, 2050); // setelah 2 detik dipasang lagi (sentuhan berikutnya juga memasangnya)
+    };
+    window.addEventListener('popstate', onPop);
+    window.addEventListener('pointerdown', tahan, true);
+    window.addEventListener('keydown', tahan, true);
+    return () => {
+      clearTimeout(tunda);
+      window.removeEventListener('popstate', onPop);
+      window.removeEventListener('pointerdown', tahan, true);
+      window.removeEventListener('keydown', tahan, true);
+    };
+  }, []);
 
   const go = useCallback<Ctx['go']>((t, extra) => {
     setTab(t);
