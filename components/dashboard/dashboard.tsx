@@ -191,7 +191,7 @@ export function Dashboard() {
             {g.items.map(i => {
               const Ic = i.ic, b = i.href ? undefined : badges[i.key as Tab];
               return i.href
-                ? <a key={i.key} className="it" href={i.href} target="_blank" rel="noopener"><Ic />{i.label}</a>
+                ? <a key={i.key} className="it" href={i.href}><Ic />{i.label}</a>
                 : (
                   <button key={i.key} className="it" aria-current={tab === i.key ? 'page' : undefined} onClick={() => go(i.key as Tab)}>
                     <Ic />{i.label}{b?.n ? <span className={`badge${b.w ? ' w' : ''}`}>{b.n}</span> : null}

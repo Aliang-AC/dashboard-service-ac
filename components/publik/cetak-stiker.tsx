@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import QRCode from 'qrcode';
 import useSWR from 'swr';
 import { toast } from 'sonner';
@@ -19,6 +20,7 @@ const PER_LEMBAR = 12, PER_LEMBAR_INST = 10;
    Mode "konsumen" (?p=<id>): stiker unit milik satu konsumen. */
 export function CetakStiker() {
   const sp = useSearchParams();
+  const router = useRouter();
   const hanya = sp.get('p');
   const khusus = hanya ? null : sp.get('k');
   const kosong = useSWR(hanya ? null : ['stiker-kosong', khusus || ''], async () => { const r = await daftarStikerKosong(khusus || undefined); if (!r.ok) throw new Error(r.error); return r.data; });
@@ -65,6 +67,8 @@ export function CetakStiker() {
     toast.success(`${r.data.jumlah} unit diberi nomor stiker.`);
     semua.mutate();
   };
+  /* kembali ke halaman sebelumnya (dashboard); kalau dibuka langsung, ke dashboard */
+  const kembali = () => { if (history.length > 1 && document.referrer.startsWith(location.origin)) history.back(); else router.replace('/'); };
   const loading = hanya || khusus ? !semua.data || (!hanya && !kosong.data) : !kosong.data;
   const judul = hanya ? `Cetak stiker · ${p?.nama || ''}` : khusus ? `Cetak stiker kosong khusus · ${namaInst}` : 'Cetak stiker QR kosong';
 
@@ -94,25 +98,29 @@ export function CetakStiker() {
         .stk .kode { position: absolute; right: 2.2mm; bottom: 2.3mm; font: 1.9mm/1 Consolas, monospace; color: #9aa4ae; }
         .stk.inst .instnm { margin-top: 3.4mm; width: 44mm; box-sizing: border-box; border-radius: 1.6mm; background: #eef3ff; border: .25mm solid #c9d6f5;
                padding: 1.1mm 1.5mm; font-weight: 900; color: #123a9c; font-size: 2.75mm; line-height: 1.18; }
-        .stk.inst .scan { margin-top: 1.6mm; }
-        .stk.inst .qrbaris { position: relative; display: flex; justify-content: center; margin-top: 1.6mm; }
-        .stk.inst .qr { width: 25mm; height: 25mm; margin-top: 0; }
-        .stk.inst .kodev { position: absolute; left: calc(50% + 13.8mm); top: 50%; transform: translateY(-50%) rotate(180deg); writing-mode: vertical-rl;
+        .stk.v2 .scan { margin-top: 1.6mm; }
+        .stk.v2.gt .scan { margin-top: 4mm; }
+        .stk.v2.gt .qr { width: 27mm; height: 27mm; }
+        .stk.v2.gt .kodev { left: calc(50% + 14.8mm); }
+        .stk.v2 .qrbaris { position: relative; display: flex; justify-content: center; margin-top: 1.6mm; }
+        .stk.v2 .qr { width: 25mm; height: 25mm; margin-top: 0; }
+        .stk.v2 .kodev { position: absolute; left: calc(50% + 13.8mm); top: 50%; transform: translateY(-50%) rotate(180deg); writing-mode: vertical-rl;
                white-space: nowrap; font: 700 2.3mm/1 Consolas, monospace; color: #123a9c; letter-spacing: .1mm; }
-        .stk.inst .garis { width: 30mm; height: .25mm; background: #dde3ea; margin-top: 1.8mm; }
-        .stk.inst .top { margin-top: 1.4mm; }
-        .stk.inst .tag { margin-top: 1mm; }
-        .stk.inst .wa { margin-top: 1.4mm; }
+        .stk.v2 .garis { width: 30mm; height: .25mm; background: #dde3ea; margin-top: 1.8mm; }
+        .stk.v2 .top { margin-top: 1.4mm; }
+        .stk.v2 .tag { margin-top: 1mm; }
+        .stk.v2 .wa { margin-top: 1.4mm; }
         @media print { .no-print { display: none !important; } body { background: #fff !important; } .wrap { max-width: none !important; padding: 0 !important; } .lembar + .lembar-inst { margin-top: 0; } }
       `}</style>
       <main className="wrap" style={{ paddingTop: 18, paddingBottom: 30 }}>
         <div className="no-print panel" style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div><Button size="sm" variant="outline" onClick={kembali}>← Kembali ke dashboard</Button></div>
           <h3 style={{ margin: 0 }}>{judul}</h3>
           {!hanya && instansi.length > 0 && (
             <div className="actions" style={{ alignItems: 'center' }}>
               <span className="sm">Jenis stiker:</span>
-              <Button size="sm" variant={khusus ? 'outline' : 'default'} nativeButton={false} render={<a href="/stiker" />}>Umum (GT)</Button>
-              {instansi.map(x => <Button key={x.id} size="sm" variant={khusus === x.id ? 'default' : 'outline'} nativeButton={false} render={<a href={`/stiker?k=${x.id}`} />}>{x.stikerNama || x.nama} ({x.stikerSeri})</Button>)}
+              <Button size="sm" variant={khusus ? 'outline' : 'default'} nativeButton={false} render={<Link href="/stiker" replace />}>Umum (GT)</Button>
+              {instansi.map(x => <Button key={x.id} size="sm" variant={khusus === x.id ? 'default' : 'outline'} nativeButton={false} render={<Link href={`/stiker?k=${x.id}`} replace />}>{x.stikerNama || x.nama} ({x.stikerSeri})</Button>)}
             </div>
           )}
           {!hanya && semua.data && instansi.length === 0 && (
@@ -166,17 +174,20 @@ export function CetakStiker() {
         {umum.length > 0 && (
           <div className="lembar">
             {umum.map(x => (
-              <div key={x.kode} className="stk">
+              <div key={x.kode} className="stk v2 gt">
+                <div className="scan">Scan untuk cek jadwal<br />atau Hubungi {MEREK_ALIAS}</div>
+                <div className="qrbaris">
+                  <div className="qr" dangerouslySetInnerHTML={{ __html: qr[x.kode] || '' }} />
+                  <div className="kodev">{x.kode}</div>
+                </div>
+                <div className="garis" />
                 <div className="top">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src="/logo.svg" alt="" />
                   <div className="nm">{MEREK}<small>({MEREK_ALIAS})</small></div>
                 </div>
                 <div className="tag">{TAGLINE}</div>
-                <div className="qr" dangerouslySetInnerHTML={{ __html: qr[x.kode] || '' }} />
-                <div className="scan">Scan untuk cek jadwal<br />atau chat {MEREK_ALIAS}</div>
                 <div className="wa">WA : {WA_USAHA_TAMPIL} (Admin)</div>
-                <div className="kode">{x.kode}</div>
               </div>
             ))}
           </div>
@@ -184,7 +195,7 @@ export function CetakStiker() {
         {inst.length > 0 && (
           <div className="lembar-inst">
             {inst.map(x => (
-              <div key={x.kode} className="stk inst">
+              <div key={x.kode} className="stk v2 inst">
                 <div className="instnm">{x.inst}</div>
                 <div className="scan">Scan untuk cek jadwal<br />atau Hubungi {MEREK_ALIAS}</div>
                 <div className="qrbaris">

@@ -103,8 +103,8 @@ export function PelangganView({ awal = 'Semua' }: { awal?: Filter }) {
         <div className="actions">
           <Button onClick={() => open({ kind: 'pelanggan' })}>+ Konsumen</Button>
           <Button variant="outline" onClick={() => open({ kind: 'bagikanForm' })}>Bagikan form daftar</Button>
-          <Button variant="outline" nativeButton={false} render={<a href="/stiker" target="_blank" rel="noopener" />}>Cetak stiker QR kosong</Button>
-          {(d.pendataan || []).map(x => <Button key={x.id} variant="outline" nativeButton={false} render={<a href={`/pendataan?p=${x.id}`} target="_blank" rel="noopener" />}>📋 Pendataan AC · {x.nama}</Button>)}
+          <Button variant="outline" nativeButton={false} render={<a href="/stiker" />}>Cetak stiker QR kosong</Button>
+          {(d.pendataan || []).map(x => <Button key={x.id} variant="outline" nativeButton={false} render={<a href={`/pendataan?p=${x.id}`} />}>📋 Pendataan AC · {x.nama}</Button>)}
         </div>
       </div>
       <div className="toolbar">
@@ -226,8 +226,8 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
           </div>
           {p?.stikerSeri ? (
             <div className="actions">
-              <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/stiker?k=${p.id}`} target="_blank" rel="noopener" />}>Cetak stiker kosong {p.stikerSeri}</Button>
-              {p.pendataan && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/pendataan?p=${p.id}`} target="_blank" rel="noopener" />}>Buka mode pendataan</Button>}
+              <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/stiker?k=${p.id}`} />}>Cetak stiker kosong {p.stikerSeri}</Button>
+              {p.pendataan && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/pendataan?p=${p.id}`} />}>Buka mode pendataan</Button>}
             </div>
           ) : <p className="hint" style={{ margin: 0 }}>Isi kode seri lalu simpan. Setelah itu tombol cetak stiker khusus & mode pendataan muncul di sini.</p>}
         </fieldset>
@@ -281,7 +281,7 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
           <div className="actions">
             <Button type="button" size="sm" onClick={() => open({ kind: 'order', pelangganId: p.id })}>+ Order baru untuk konsumen ini</Button>
             {(p.maps || p.alamat) && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={mapsUrl(p.alamat, p.maps)} target="_blank" rel="noopener noreferrer" />}>Buka Maps</Button>}
-            {p.units?.length ? <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/stiker?p=${p.id}`} target="_blank" rel="noopener" />}>Cetak stiker unit</Button> : null}
+            {p.units?.length ? <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/stiker?p=${p.id}`} />}>Cetak stiker unit</Button> : null}
             <Button type="button" size="sm" variant="ghost" disabled={muatLama} onClick={async () => {
               setMuatLama(true);
               const r = await orderPelangganLengkap(p.id);

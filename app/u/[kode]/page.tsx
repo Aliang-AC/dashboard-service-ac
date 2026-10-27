@@ -108,7 +108,7 @@ async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
             </div>
           </div>
         )}
-        <FormKeluhan pesan={pesan} wa={WA_USAHA} label={`${inst ? 'Hubungi' : 'Chat'} ${MEREK_ALIAS}`} />
+        <FormKeluhan pesan={pesan} wa={WA_USAHA} label={`Hubungi ${MEREK_ALIAS}`} />
         <p className="hint" style={{ textAlign: 'center', margin: 0 }}>AC yang rutin dibersihkan lebih dingin, hemat listrik, dan awet.</p>
       </div>
       <Kaki kode={kode} />
