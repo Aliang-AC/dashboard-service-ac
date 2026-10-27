@@ -115,6 +115,12 @@ export function CetakStiker() {
               {instansi.map(x => <Button key={x.id} size="sm" variant={khusus === x.id ? 'default' : 'outline'} nativeButton={false} render={<a href={`/stiker?k=${x.id}`} />}>{x.stikerNama || x.nama} ({x.stikerSeri})</Button>)}
             </div>
           )}
+          {!hanya && semua.data && instansi.length === 0 && (
+            <p className="banner" style={{ margin: 0 }}>
+              Belum ada stiker khusus instansi (mis. RSUD). Cara mengaktifkan: menu <b>Pelanggan</b> → buka data instansinya (atau <b>+ Konsumen</b>) → Penagihan <b>Instansi</b> →
+              isi bagian <b>“Stiker QR khusus instansi”</b> (kode seri &amp; nama di stiker) → <b>Simpan</b>. Setelah itu pilihannya muncul di sini.
+            </p>
+          )}
           <p className="hint" style={{ margin: 0 }}>
             {hanya
               ? 'Stiker untuk unit AC konsumen ini. Tempel di dekat dudukan remote AC.'
