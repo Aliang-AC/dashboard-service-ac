@@ -7,24 +7,29 @@ import { toast } from 'sonner';
 import { beriStikerUnit, buatStikerKosong, daftarStikerKosong, loadAll, saveTemplateScan } from '@/app/actions';
 import { Button } from '@/components/ui/button';
 import { MEREK, MEREK_ALIAS, TAGLINE, WA_USAHA_TAMPIL } from '@/lib/brand';
-import { isiTemplateScan, lokasiUnit, TEMPLATE_SCAN } from '@/lib/unit';
+import { isiTemplateScan, lokasiUnit, seriKode, TEMPLATE_SCAN } from '@/lib/unit';
 
-type Item = { kode: string; ket: string };
-const PER_LEMBAR = 12;
+type Item = { kode: string; ket: string; inst?: string };
+const PER_LEMBAR = 12, PER_LEMBAR_INST = 10;
 
-/* Lembar stiker A4: 3 kolom × 4 baris, tiap stiker 50 × 70 mm.
-   Mode "kosong": stiker bernomor yang belum terpasang (dipasang teknisi di lokasi).
+/* Lembar stiker A4.
+   Stiker umum: A4 tegak, 3 kolom × 4 baris, tiap stiker 50 × 70 mm.
+   Stiker khusus instansi (kode seri sendiri, mis. RSUD-0001): A4 tidur, 5 kolom × 2 baris, tiap stiker 50 × 75 mm.
+   Mode "kosong": stiker bernomor yang belum terpasang (?k=<id instansi> = stiker khusus instansi itu).
    Mode "konsumen" (?p=<id>): stiker unit milik satu konsumen. */
 export function CetakStiker() {
   const sp = useSearchParams();
   const hanya = sp.get('p');
-  const kosong = useSWR(hanya ? null : 'stiker-kosong', async () => { const r = await daftarStikerKosong(); if (!r.ok) throw new Error(r.error); return r.data; });
+  const khusus = hanya ? null : sp.get('k');
+  const kosong = useSWR(hanya ? null : ['stiker-kosong', khusus || ''], async () => { const r = await daftarStikerKosong(khusus || undefined); if (!r.ok) throw new Error(r.error); return r.data; });
   const semua = useSWR('stiker-all', async () => { const r = await loadAll(); if (!r.ok) throw new Error(r.error); return r.data; });
-  const p = semua.data?.pelanggan.find(x => x.id === hanya);
+  const p = semua.data?.pelanggan.find(x => x.id === (hanya || khusus));
+  const namaInst = p?.stikerSeri ? p.stikerNama || p.nama : '';
+  const instansi = (semua.data?.pelanggan || []).filter(x => x.stikerSeri);
 
   const items: Item[] = useMemo(() => hanya
-    ? (p?.units || []).filter(u => u.kode && !u.nonaktif).map(u => ({ kode: u.kode!, ket: lokasiUnit(u) }))
-    : (kosong.data || []).map(s => ({ kode: s.kode, ket: `dibuat ${new Date(s.dibuatAt).toLocaleDateString('id-ID')}` })), [hanya, p, kosong.data]);
+    ? (p?.units || []).filter(u => u.kode && !u.nonaktif).map(u => ({ kode: u.kode!, ket: lokasiUnit(u), inst: namaInst && seriKode(u.kode!) === p?.stikerSeri ? namaInst : undefined }))
+    : (kosong.data || []).map(s => ({ kode: s.kode, ket: `dibuat ${new Date(s.dibuatAt).toLocaleDateString('id-ID')}`, inst: khusus ? namaInst || ' ' : undefined })), [hanya, khusus, p, namaInst, kosong.data]);
   const tanpaKode = (p?.units || []).filter(u => !u.kode && !u.nonaktif).length;
 
   const [pilih, setPilih] = useState<Record<string, boolean>>({});
@@ -32,6 +37,10 @@ export function CetakStiker() {
   const [busy, setBusy] = useState(false);
   const [qr, setQr] = useState<Record<string, string>>({});
   const dipilih = items.filter(x => pilih[x.kode] ?? true);
+  const umum = dipilih.filter(x => !x.inst), inst = dipilih.filter(x => x.inst);
+  const perLembar = khusus ? PER_LEMBAR_INST : PER_LEMBAR;
+  const maksLembar = khusus ? 20 : 10;
+  const jumlahLembar = Math.ceil(umum.length / PER_LEMBAR) + Math.ceil(inst.length / PER_LEMBAR_INST);
 
   useEffect(() => {
     const origin = location.origin;
@@ -41,7 +50,7 @@ export function CetakStiker() {
 
   const buat = async () => {
     setBusy(true);
-    const r = await buatStikerKosong(lembarBaru * PER_LEMBAR);
+    const r = await buatStikerKosong(lembarBaru * perLembar, khusus || undefined);
     setBusy(false);
     if (!r.ok) return toast.error(r.error);
     toast.success(`Stiker ${r.data.dari} s/d ${r.data.sampai} dibuat. Siap dicetak.`);
@@ -56,16 +65,21 @@ export function CetakStiker() {
     toast.success(`${r.data.jumlah} unit diberi nomor stiker.`);
     semua.mutate();
   };
-  const loading = hanya ? !semua.data : !kosong.data;
+  const loading = hanya || khusus ? !semua.data || (!hanya && !kosong.data) : !kosong.data;
+  const judul = hanya ? `Cetak stiker · ${p?.nama || ''}` : khusus ? `Cetak stiker kosong khusus · ${namaInst}` : 'Cetak stiker QR kosong';
 
   return (
     <>
       <style>{`
         @page { size: A4; margin: 6mm; }
+        @page inst { size: A4 landscape; margin: 6mm; }
         .lembar { display: grid; grid-template-columns: repeat(3, 50mm); gap: 2mm 3mm; justify-content: center; }
+        .lembar-inst { page: inst; display: grid; grid-template-columns: repeat(5, 50mm); gap: 2mm 3mm; justify-content: center; }
+        .lembar + .lembar-inst { margin-top: 8mm; }
         .stk { position: relative; width: 50mm; height: 70mm; border: .25mm solid #cfd6df; border-radius: 3mm; overflow: hidden; box-sizing: border-box;
                display: flex; flex-direction: column; align-items: center; background: #fff; color: #14202b; break-inside: avoid;
                -webkit-print-color-adjust: exact; print-color-adjust: exact; font-family: Arial, Helvetica, sans-serif; text-align: center; }
+        .stk.inst { height: 75mm; }
         .stk::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1.4mm; background: linear-gradient(90deg, #123a9c, #1d4fc4); }
         .stk::after { content: ""; position: absolute; bottom: 0; left: 0; right: 0; height: 1.4mm; background: linear-gradient(90deg, #e8382b, #f47a20); }
         .stk .top { display: flex; align-items: center; justify-content: center; gap: 1.5mm; margin-top: 3.2mm; }
@@ -78,22 +92,43 @@ export function CetakStiker() {
         .stk .scan { margin-top: 1.8mm; font-size: 2.9mm; font-weight: 800; line-height: 1.22; padding: 0 2mm; }
         .stk .wa { margin-top: 1.2mm; font-size: 2.6mm; font-weight: 800; color: #17803d; }
         .stk .kode { position: absolute; right: 2.2mm; bottom: 2.3mm; font: 1.9mm/1 Consolas, monospace; color: #9aa4ae; }
-        @media print { .no-print { display: none !important; } body { background: #fff !important; } .wrap { max-width: none !important; padding: 0 !important; } }
+        .stk.inst .instnm { margin-top: 3.4mm; width: 44mm; box-sizing: border-box; border-radius: 1.6mm; background: #eef3ff; border: .25mm solid #c9d6f5;
+               padding: 1.1mm 1.5mm; font-weight: 900; color: #123a9c; font-size: 2.75mm; line-height: 1.18; }
+        .stk.inst .scan { margin-top: 1.6mm; }
+        .stk.inst .qrbaris { position: relative; display: flex; justify-content: center; margin-top: 1.6mm; }
+        .stk.inst .qr { width: 25mm; height: 25mm; margin-top: 0; }
+        .stk.inst .kodev { position: absolute; left: calc(50% + 13.8mm); top: 50%; transform: translateY(-50%) rotate(180deg); writing-mode: vertical-rl;
+               white-space: nowrap; font: 700 2.3mm/1 Consolas, monospace; color: #123a9c; letter-spacing: .1mm; }
+        .stk.inst .garis { width: 30mm; height: .25mm; background: #dde3ea; margin-top: 1.8mm; }
+        .stk.inst .top { margin-top: 1.4mm; }
+        .stk.inst .tag { margin-top: 1mm; }
+        .stk.inst .wa { margin-top: 1.4mm; }
+        @media print { .no-print { display: none !important; } body { background: #fff !important; } .wrap { max-width: none !important; padding: 0 !important; } .lembar + .lembar-inst { margin-top: 0; } }
       `}</style>
       <main className="wrap" style={{ paddingTop: 18, paddingBottom: 30 }}>
         <div className="no-print panel" style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <h3 style={{ margin: 0 }}>{hanya ? `Cetak stiker · ${p?.nama || ''}` : 'Cetak stiker QR kosong'}</h3>
+          <h3 style={{ margin: 0 }}>{judul}</h3>
+          {!hanya && instansi.length > 0 && (
+            <div className="actions" style={{ alignItems: 'center' }}>
+              <span className="sm">Jenis stiker:</span>
+              <Button size="sm" variant={khusus ? 'outline' : 'default'} nativeButton={false} render={<a href="/stiker" />}>Umum (GT)</Button>
+              {instansi.map(x => <Button key={x.id} size="sm" variant={khusus === x.id ? 'default' : 'outline'} nativeButton={false} render={<a href={`/stiker?k=${x.id}`} />}>{x.stikerNama || x.nama} ({x.stikerSeri})</Button>)}
+            </div>
+          )}
           <p className="hint" style={{ margin: 0 }}>
             {hanya
               ? 'Stiker untuk unit AC konsumen ini. Tempel di dekat dudukan remote AC.'
-              : 'Stiker bernomor yang belum terpasang. Teknisi membawanya ke lokasi, menempelkannya di dekat dudukan remote, lalu scan dari menu Tugas supaya terhubung ke unit AC.'}
-            {' '}1 lembar A4 = {PER_LEMBAR} stiker (5 × 7 cm). Saat mencetak, pilih skala <b>100% / Actual size</b> (jangan “Fit to page”) dan nyalakan <b>Background graphics</b>.
+              : khusus
+                ? `Stiker bernomor khusus ${namaInst} (kode ${p?.stikerSeri || '…'}-xxxx). Hanya bisa dipasang di instansi ini, lewat Mode Pendataan atau tugas order. Nomor berikutnya otomatis melanjutkan.`
+                : 'Stiker bernomor yang belum terpasang. Teknisi membawanya ke lokasi, menempelkannya di dekat dudukan remote, lalu scan dari menu Tugas supaya terhubung ke unit AC.'}
+            {' '}{khusus ? `1 lembar A4 tidur (landscape) = ${PER_LEMBAR_INST} stiker (5 × 7,5 cm).` : `1 lembar A4 = ${PER_LEMBAR} stiker (5 × 7 cm).`} Saat mencetak, pilih skala <b>100% / Actual size</b> (jangan “Fit to page”) dan nyalakan <b>Background graphics</b>.
           </p>
-          {!hanya && (
+          {khusus && p && !p.stikerSeri && <p className="banner" style={{ margin: 0 }}>Instansi ini belum punya kode seri stiker. Atur di data konsumen → “Stiker QR khusus instansi”.</p>}
+          {!hanya && (!khusus || p?.stikerSeri) && (
             <div className="actions" style={{ alignItems: 'center' }}>
               <span className="sm">Buat stiker baru:</span>
-              <input className="field" type="number" min={1} max={10} value={lembarBaru} onChange={e => setLembarBaru(Math.min(10, Math.max(1, +e.target.value || 1)))} style={{ width: 64 }} aria-label="Jumlah lembar" />
-              <span className="sm">lembar ({lembarBaru * PER_LEMBAR} stiker)</span>
+              <input className="field" type="number" min={1} max={maksLembar} value={lembarBaru} onChange={e => setLembarBaru(Math.min(maksLembar, Math.max(1, +e.target.value || 1)))} style={{ width: 64 }} aria-label="Jumlah lembar" />
+              <span className="sm">lembar ({lembarBaru * perLembar} stiker)</span>
               <Button size="sm" variant="secondary" disabled={busy} onClick={buat}>+ Buat nomor stiker</Button>
             </div>
           )}
@@ -109,7 +144,7 @@ export function CetakStiker() {
               <div className="actions" style={{ alignItems: 'center' }}>
                 <Button size="sm" variant="outline" onClick={() => setPilih(Object.fromEntries(items.map(x => [x.kode, true])))}>Pilih semua</Button>
                 <Button size="sm" variant="outline" onClick={() => setPilih(Object.fromEntries(items.map(x => [x.kode, false])))}>Kosongkan</Button>
-                <Button onClick={() => window.print()} disabled={!dipilih.length}>🖨 Cetak {dipilih.length} stiker ({Math.ceil(dipilih.length / PER_LEMBAR)} lembar)</Button>
+                <Button onClick={() => window.print()} disabled={!dipilih.length}>🖨 Cetak {dipilih.length} stiker ({jumlahLembar} lembar)</Button>
               </div>
               <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 8, padding: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 2 }}>
                 {items.map(x => (
@@ -122,22 +157,46 @@ export function CetakStiker() {
             </>
           ) : <div className="empty">{hanya ? 'Belum ada unit dengan nomor stiker.' : 'Belum ada stiker kosong. Klik “Buat nomor stiker” dulu.'}</div>}
         </div>
-        <div className="lembar">
-          {dipilih.map(x => (
-            <div key={x.kode} className="stk">
-              <div className="top">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/logo.svg" alt="" />
-                <div className="nm">{MEREK}<small>({MEREK_ALIAS})</small></div>
+        {umum.length > 0 && (
+          <div className="lembar">
+            {umum.map(x => (
+              <div key={x.kode} className="stk">
+                <div className="top">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/logo.svg" alt="" />
+                  <div className="nm">{MEREK}<small>({MEREK_ALIAS})</small></div>
+                </div>
+                <div className="tag">{TAGLINE}</div>
+                <div className="qr" dangerouslySetInnerHTML={{ __html: qr[x.kode] || '' }} />
+                <div className="scan">Scan untuk cek jadwal<br />atau chat {MEREK_ALIAS}</div>
+                <div className="wa">WA : {WA_USAHA_TAMPIL} (Admin)</div>
+                <div className="kode">{x.kode}</div>
               </div>
-              <div className="tag">{TAGLINE}</div>
-              <div className="qr" dangerouslySetInnerHTML={{ __html: qr[x.kode] || '' }} />
-              <div className="scan">Scan untuk cek jadwal<br />atau chat {MEREK_ALIAS}</div>
-              <div className="wa">WA : {WA_USAHA_TAMPIL} (Admin)</div>
-              <div className="kode">{x.kode}</div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
+        {inst.length > 0 && (
+          <div className="lembar-inst">
+            {inst.map(x => (
+              <div key={x.kode} className="stk inst">
+                <div className="instnm">{x.inst}</div>
+                <div className="scan">Scan untuk cek jadwal<br />atau Hubungi {MEREK_ALIAS}</div>
+                <div className="qrbaris">
+                  <div className="qr" dangerouslySetInnerHTML={{ __html: qr[x.kode] || '' }} />
+                  <div className="kodev">{x.kode}</div>
+                </div>
+                <div className="garis" />
+                <div className="top">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/logo.svg" alt="" />
+                  <div className="nm">{MEREK}<small>({MEREK_ALIAS})</small></div>
+                </div>
+                <div className="tag">{TAGLINE}</div>
+                <div className="wa">WA : {WA_USAHA_TAMPIL} (Admin)</div>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
     </>
   );

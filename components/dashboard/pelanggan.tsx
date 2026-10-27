@@ -104,6 +104,7 @@ export function PelangganView({ awal = 'Semua' }: { awal?: Filter }) {
           <Button onClick={() => open({ kind: 'pelanggan' })}>+ Konsumen</Button>
           <Button variant="outline" onClick={() => open({ kind: 'bagikanForm' })}>Bagikan form daftar</Button>
           <Button variant="outline" nativeButton={false} render={<a href="/stiker" target="_blank" rel="noopener" />}>Cetak stiker QR kosong</Button>
+          {(d.pendataan || []).map(x => <Button key={x.id} variant="outline" nativeButton={false} render={<a href={`/pendataan?p=${x.id}`} target="_blank" rel="noopener" />}>📋 Pendataan AC · {x.nama}</Button>)}
         </div>
       </div>
       <div className="toolbar">
@@ -174,6 +175,7 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
           nama: f.nama, hp: f.hp, alamat: f.alamat, maps: f.maps, patokan: f.patokan, tipeLokasi: f.tipeLokasi, sumber: f.sumber,
           jenis, tempoHari: jenis === 'Instansi' ? +f.tempoHari || 0 : 0, intervalBulan: +f.intervalBulan || 3,
           izinPengingat: !!f.izinPengingat, rekening: (f.rekening || undefined) as Pelanggan['rekening'], units: units.map(({ key, ...u }) => (void key, u)), gedung, catatan: f.catatan, versi,
+          stikerSeri: f.stikerSeri ?? p?.stikerSeri ?? '', stikerNama: f.stikerNama ?? p?.stikerNama ?? '', pendataan: f.stikerSeri !== undefined ? !!f.pendataan : !!p?.pendataan,
         });
         return run(Promise.resolve(r.ok ? { ok: true as const } : r), p ? 'Data konsumen diperbarui' : 'Konsumen ditambahkan');
       }}
@@ -209,6 +211,27 @@ export function PelangganDialog({ id, onClose }: { id?: string; onClose: () => v
       </div>
 
       {(jenis === 'Instansi' || gedung.length > 0) && <GedungEditor gedung={gedung} setGedung={setGedung} units={units} setUnits={setUnits} />}
+
+      {(jenis === 'Instansi' || p?.stikerSeri) && (
+        <fieldset className="box">
+          <legend>Stiker QR khusus instansi</legend>
+          <div className="grid2">
+            <label className="lbl">Kode seri stiker <span className="sm">(2–6 huruf, mis. RSUD)</span>
+              <input className="field mono" name="stikerSeri" defaultValue={p?.stikerSeri || ''} maxLength={6} style={{ textTransform: 'uppercase' }} placeholder="kosong = stiker umum GT" />
+            </label>
+            <label className="lbl">Nama yang dicetak di stiker<input className="field" name="stikerNama" defaultValue={p?.stikerNama || ''} maxLength={80} placeholder="mis. RSUD Ade Muhammad Djoen Sintang" /></label>
+            <label className="lbl span2" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" name="pendataan" defaultChecked={!!p?.pendataan} /> Mode pendataan aktif (pemilik, admin &amp; teknisi bisa mendata AC lewat stiker khusus tanpa order)
+            </label>
+          </div>
+          {p?.stikerSeri ? (
+            <div className="actions">
+              <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/stiker?k=${p.id}`} target="_blank" rel="noopener" />}>Cetak stiker kosong {p.stikerSeri}</Button>
+              {p.pendataan && <Button type="button" size="sm" variant="outline" nativeButton={false} render={<a href={`/pendataan?p=${p.id}`} target="_blank" rel="noopener" />}>Buka mode pendataan</Button>}
+            </div>
+          ) : <p className="hint" style={{ margin: 0 }}>Isi kode seri lalu simpan. Setelah itu tombol cetak stiker khusus & mode pendataan muncul di sini.</p>}
+        </fieldset>
+      )}
 
       <fieldset className="box">
         <legend>Unit AC · {units.filter(u => !u.nonaktif).length}{units.some(u => u.nonaktif) ? ` (+${units.filter(u => u.nonaktif).length} tidak aktif)` : ''}</legend>

@@ -62,6 +62,7 @@ export function ScanStiker({ onKode, onBatal }: { onKode: (kode: string) => void
 
 /* Hasil cek stiker: siap dipasang / sudah terpakai (tampilkan milik siapa) / tidak berlaku */
 export function StatusStikerBox({ info, unitId, pelangganId }: { info: InfoStiker; unitId?: string; pelangganId: string }) {
+  if (info.status === 'kosong' && info.untuk && info.untuk !== pelangganId) return <p className="banner" style={{ margin: 0, background: 'var(--bad-soft)', color: 'var(--bad)' }}>Stiker <b className="mono">{info.kode}</b> khusus untuk instansi lain. Pakai stiker lain.</p>;
   if (info.status === 'kosong') return <p className="banner" style={{ margin: 0, background: 'var(--good-soft)', color: 'var(--good)' }}>✓ Stiker <b className="mono">{info.kode}</b> masih baru, siap dipasang.</p>;
   if (info.status === 'aktif' && info.pelangganId === pelangganId && info.unitId === unitId) return <p className="banner" style={{ margin: 0 }}>Stiker <b className="mono">{info.kode}</b> memang sudah terpasang di unit ini.</p>;
   if (info.status === 'aktif')
@@ -76,7 +77,7 @@ export function StatusStikerBox({ info, unitId, pelangganId }: { info: InfoStike
   return <p className="banner" style={{ margin: 0, background: 'var(--bad-soft)', color: 'var(--bad)' }}>Nomor <b className="mono">{info.kode}</b> tidak terdaftar. Cek lagi nomor di stiker.</p>;
 }
 export const stikerBisaDipakai = (info: InfoStiker | null, pelangganId: string, unitId?: string) =>
-  !!info && (info.status === 'kosong' || (info.status === 'aktif' && info.pelangganId === pelangganId && info.unitId === unitId));
+  !!info && ((info.status === 'kosong' && (!info.untuk || info.untuk === pelangganId)) || (info.status === 'aktif' && info.pelangganId === pelangganId && info.unitId === unitId));
 
 /* Pilih gedung dari daftar konsumen, atau tulis gedung baru (dengan peringatan kalau mirip yang sudah ada) */
 export function PilihGedung({ daftar, value, onChange }: { daftar: string[]; value: string; onChange: (g: string) => void }) {

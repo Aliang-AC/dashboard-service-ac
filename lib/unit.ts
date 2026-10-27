@@ -1,14 +1,18 @@
 /* Aturan unit AC & stiker QR — dipakai server & browser (tanpa dependensi). */
 import type { UnitAC } from './types';
 
-export const POLA_KODE = /^GT-\d{4,}$/;
-export const kodeStiker = (n: number) => 'GT-' + String(n).padStart(4, '0');
+/* Kode stiker = SERI-nomor: GT-0015 (stiker umum) atau seri khusus instansi, mis. RSUD-0001. */
+export const POLA_KODE = /^[A-Z]{2,6}-\d{4,}$/;
+export const POLA_SERI = /^[A-Z]{2,6}$/;
+export const SERI_UMUM = 'GT';
+export const kodeStiker = (n: number, seri = SERI_UMUM) => seri + '-' + String(n).padStart(4, '0');
+export const seriKode = (kode: string) => kode.split('-')[0] || '';
 
-/* ambil kode dari hasil scan QR (URL …/u/GT-0015) atau ketikan ("gt 15", "GT-0015") */
+/* ambil kode dari hasil scan QR (URL …/u/GT-0015) atau ketikan ("gt 15", "GT-0015", "rsud 12") */
 export function kodeDariTeks(teks: string) {
   const t = String(teks || '').toUpperCase();
-  const m = t.match(/GT[-\s]?(\d{1,6})/);
-  return m ? kodeStiker(+m[1]) : '';
+  const m = t.match(/\/U\/([A-Z]{2,6})-(\d{1,6})/) || t.match(/(?:^|[^A-Z])([A-Z]{2,6})[-\s]?(\d{1,6})(?!\d)/);
+  return m ? kodeStiker(+m[2], m[1]) : '';
 }
 
 const fmtPk = (pk?: string) => (pk ? (/pk/i.test(pk) ? pk : pk + ' PK') : '');
@@ -27,6 +31,13 @@ export function gedungMirip(nama: string, daftar: string[]) {
   return daftar.find(g => { const x = normGedung(g); return x && x !== n && (x.startsWith(n) || n.startsWith(x)); }) || '';
 }
 export const gedungSama = (a: string, b: string) => normGedung(a) === normGedung(b);
+
+/* keluhan yang bisa dipilih petugas / konsumen saat scan stiker */
+export const KELUHAN_AC = ['Tidak dingin', 'Bocor / netes air', 'Bunyi berisik', 'Bau tidak sedap', 'Mati / tidak menyala', 'Remote rusak', 'Minta jadwal cuci'];
+export function pesanKeluhan(pesan: string, keluhan: string[], ket: string, pelapor: string) {
+  return [pesan, keluhan.length && 'Keluhan: ' + keluhan.join(', ') + '.', ket.trim() && 'Keterangan: ' + ket.trim(), pelapor.trim() && 'Pelapor: ' + pelapor.trim()]
+    .filter(Boolean).join('\n');
+}
 
 /* pesan WA otomatis dari halaman scan stiker (bisa diubah pemilik/admin di Pengaturan) */
 export const TEMPLATE_SCAN = 'Halo Aliang AC, saya mau servis AC di {lokasi} (kode {kode}).';

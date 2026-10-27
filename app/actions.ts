@@ -15,7 +15,7 @@ import { bacaVersi, tandaiBerubah } from '@/lib/versi';
 import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { labelUnit, tambahBulan } from '@/lib/servis';
 import { pakaiRoll } from '@/lib/stok';
-import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, specUnit } from '@/lib/unit';
+import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, POLA_SERI, SERI_UMUM, specUnit } from '@/lib/unit';
 import { anggotaTim, PESAN_CEPAT, type Tim, type TimHari } from '@/lib/tim';
 import { hargaOtomatis, JENIS_HARGA, TARIF_KOSONG, type PaketAC, type Tarif, type TarifLayanan } from '@/lib/tarif';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
@@ -185,6 +185,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     let st = (settings.data() as Settings) || {};
     let tarif = bacaTarif(tarifSnap.data());
     const lok: Lokasi | null = staff ? lokasi : null;
+    const pendataan = pl.filter(x => x.pendataan).map(x => ({ id: x.id, nama: x.nama }));
 
     if (me.peran !== 'owner') s = s.map(x => ({ ...x, hargaBeli: null })); // harga modal hanya untuk pemilik
     if (me.peran === 'karyawan') {
@@ -209,7 +210,7 @@ export async function loadAll(): Promise<ResultOf<AllData>> {
     }
     return {
       me, orders: o, stok: s, mutasi: mutasi ? docs<Mutasi>(mutasi) : [], karyawan: k, absensi: a, catatan: c,
-      pelanggan: pl, rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto,
+      pelanggan: pl, rekap: rekap ? docs<Rekap>(rekap) : [], fotoAktif: adaFoto, pendataan,
       settings: st, tarif, tim: docs<TimHari>(timSnap), izin: iz,
       riwayat: riwayatSnap ? docs<Riwayat>(riwayatSnap) : [],
       sampah: sampahSnap ? sampahSnap.docs.map(x => ({ id: x.id, koleksi: x.get('koleksi'), judul: x.get('judul'), oleh: x.get('oleh'), at: x.get('at'), hapusPada: x.get('hapusPada') })) : [], lokasi: lok, today: todayWIB(), versi,
@@ -296,6 +297,7 @@ const idAcak = () => Math.random().toString(36).slice(2, 10);
 /* Nomor stiker QR: GT-0001, GT-0002, … (counters/unit). Kode hanya diberikan saat stiker dicetak/dipasang. */
 const COUNTER_UNIT = () => adminDb().doc('counters/unit');
 const kodesDari = (units: UnitAC[]) => units.map(u => u.kode!).filter(Boolean);
+const MAKS_UNIT = 600; // per konsumen (RSUD ±300 AC)
 
 /* Unit dari baris order: pakai unitId yang dipilih, atau cocokkan label, atau buat unit baru. */
 function sambungUnit(lama: UnitAC[], items: OrderItem[], intervalDefault: number, tanggal: string) {
@@ -1023,14 +1025,19 @@ export async function savePelanggan(id: string | null, v: PelangganInput): Promi
     if (!nama) throw new UserError('Nama pelanggan wajib diisi.');
     const hp = str(v.hp, 30);
     const intervalBulan = Math.min(24, Math.max(1, Math.round(num(v.intervalBulan)) || 3));
+    const seri = str(v.stikerSeri, 6).toUpperCase();
+    if (seri && (!POLA_SERI.test(seri) || seri === SERI_UMUM)) throw new UserError('Kode seri stiker berupa 2–6 huruf (mis. RSUD), selain GT.');
     const db = adminDb();
     const ref = id ? db.doc('pelanggan/' + str(id, 64)) : db.collection('pelanggan').doc();
     await db.runTransaction(async tx => {
       const snap = id ? await tx.get(ref) : null;
       if (id && !snap?.exists) throw new UserError('Pelanggan tidak ditemukan.');
       if (snap && (snap.get('updatedAt') || 0) > (num(v.versi) || 0)) throw new UserError(BENTROK);
+      const seriDipakai = seri ? await tx.get(db.collection('pelanggan').where('stikerSeri', '==', seri).limit(2)) : null;
+      const pemilikSeri = seriDipakai?.docs.find(x => x.id !== ref.id);
+      if (pemilikSeri) throw new UserError(`Kode seri ${seri} sudah dipakai ${pemilikSeri.get('nama')}. Pilih kode lain.`);
       const lama = new Map(((snap?.get('units') || []) as UnitAC[]).map(u => [u.id, u]));
-      const units = (v.units || []).slice(0, 300)
+      const units = (v.units || []).slice(0, MAKS_UNIT)
         .map(u => cleanUnit(u, intervalBulan, lama.get(str(u.id, 20))))
         .filter(u => u.label || u.merk || u.kode);
       const dihapus = [...lama.values()].filter(u => !units.some(x => x.id === u.id));
@@ -1045,6 +1052,7 @@ export async function savePelanggan(id: string | null, v: PelangganInput): Promi
         izinPengingat: v.izinPengingat !== false,
         rekening: v.rekening === 'cv' || v.rekening === 'pribadi' ? v.rekening : '',
         units, unitKodes: kodesDari(units), gedung: rapikanGedung(v.gedung || [], units), catatan: str(v.catatan, 1000),
+        stikerSeri: seri, stikerNama: seri ? str(v.stikerNama, 80) : '', pendataan: !!seri && !!v.pendataan,
         baru: false, cekTeknisi: false, // disimpan admin = sudah dicek
         updatedAt: Date.now(),
       };
@@ -1078,20 +1086,29 @@ const cekKode = (teks: string) => {
   return kode;
 };
 
-/* pemilik/admin: buat nomor stiker kosong untuk dicetak (maks. 120 = 10 lembar A4 sekali buat) */
-export async function buatStikerKosong(jumlah: number): Promise<ResultOf<{ dari: string; sampai: string }>> {
+/* pemilik/admin: buat nomor stiker kosong untuk dicetak (maks. 200 sekali buat).
+   pelangganId = stiker khusus instansi itu: kode memakai seri-nya sendiri (RSUD-0001…) dan nomornya melanjutkan seri tsb. */
+export async function buatStikerKosong(jumlah: number, pelangganId?: string): Promise<ResultOf<{ dari: string; sampai: string }>> {
   return guarded('admin', async me => {
-    const n = Math.min(120, Math.max(1, Math.round(num(jumlah))));
+    const n = Math.min(200, Math.max(1, Math.round(num(jumlah))));
     const db = adminDb();
+    let seri = SERI_UMUM, untuk = '';
+    if (pelangganId) {
+      const p = await db.doc('pelanggan/' + str(pelangganId, 64)).get();
+      seri = p.exists ? String(p.get('stikerSeri') || '') : '';
+      if (!POLA_SERI.test(seri) || seri === SERI_UMUM) throw new UserError('Atur dulu kode seri stiker khusus di data instansi ini.');
+      untuk = p.id;
+    }
+    const counter = untuk ? db.doc('counters/stiker-' + seri) : COUNTER_UNIT();
     return db.runTransaction(async tx => {
-      const c = await tx.get(COUNTER_UNIT());
+      const c = await tx.get(counter);
       const awal = (c.get('n') || 0) + 1, batch = Date.now();
       for (let i = 0; i < n; i++) {
-        const kode = kodeStiker(awal + i);
-        tx.create(db.doc('stiker/' + kode), { kode, status: 'kosong', batch, dibuatAt: batch, oleh: me.nama });
+        const kode = kodeStiker(awal + i, seri);
+        tx.create(db.doc('stiker/' + kode), { kode, status: 'kosong', batch, dibuatAt: batch, oleh: me.nama, ...(untuk ? { seri, untuk } : {}) });
       }
-      tx.set(COUNTER_UNIT(), { n: awal + n - 1 });
-      return { dari: kodeStiker(awal), sampai: kodeStiker(awal + n - 1) };
+      tx.set(counter, { n: awal + n - 1 });
+      return { dari: kodeStiker(awal, seri), sampai: kodeStiker(awal + n - 1, seri) };
     });
   });
 }
@@ -1119,15 +1136,16 @@ export async function beriStikerUnit(pelangganId: string): Promise<ResultOf<{ ju
   });
 }
 
-/* pemilik/admin: daftar stiker yang belum terpasang (untuk cetak ulang) */
-export async function daftarStikerKosong(): Promise<ResultOf<Stiker[]>> {
+/* pemilik/admin: daftar stiker yang belum terpasang (untuk cetak ulang). pelangganId = stiker khusus instansi itu. */
+export async function daftarStikerKosong(pelangganId?: string): Promise<ResultOf<Stiker[]>> {
   return guarded('admin', async () => {
-    const q = await adminDb().collection('stiker').where('status', '==', 'kosong').get();
-    return q.docs.map(d => d.data() as Stiker).sort((a, b) => a.kode.localeCompare(b.kode));
+    const col = adminDb().collection('stiker');
+    const q = pelangganId ? await col.where('untuk', '==', str(pelangganId, 64)).where('status', '==', 'kosong').get() : await col.where('status', '==', 'kosong').get();
+    return q.docs.map(d => d.data() as Stiker).filter(s => pelangganId || !s.untuk).sort((a, b) => a.kode.localeCompare(b.kode));
   }, true);
 }
 
-export type InfoStiker = { kode: string; status: StatusStiker | 'tidak ada'; pelangganId?: string; unitId?: string; pelanggan?: string; alamat?: string; lokasi?: string; spec?: string };
+export type InfoStiker = { kode: string; status: StatusStiker | 'tidak ada'; untuk?: string; pelangganId?: string; unitId?: string; pelanggan?: string; alamat?: string; lokasi?: string; spec?: string };
 /* cek stiker sebelum dipasang: kalau sudah terpakai, tampilkan milik siapa */
 export async function cekStiker(teks: string): Promise<ResultOf<InfoStiker>> {
   return guarded('karyawan', async () => {
@@ -1136,10 +1154,10 @@ export async function cekStiker(teks: string): Promise<ResultOf<InfoStiker>> {
     const s = await db.doc('stiker/' + kode).get();
     if (!s.exists) return { kode, status: 'tidak ada' };
     const st = s.data() as Stiker;
-    if (st.status !== 'aktif' || !st.pelangganId) return { kode, status: st.status };
+    if (st.status !== 'aktif' || !st.pelangganId) return { kode, status: st.status, untuk: st.untuk };
     const p = await db.doc('pelanggan/' + st.pelangganId).get();
     const u = ((p.get('units') || []) as UnitAC[]).find(x => x.id === st.unitId);
-    return { kode, status: 'aktif', pelangganId: st.pelangganId, unitId: st.unitId, pelanggan: p.get('nama') || '', alamat: p.get('alamat') || '', lokasi: u ? lokasiUnit(u) : '', spec: u ? specUnit(u) : '' };
+    return { kode, status: 'aktif', untuk: st.untuk, pelangganId: st.pelangganId, unitId: st.unitId, pelanggan: p.get('nama') || '', alamat: p.get('alamat') || '', lokasi: u ? lokasiUnit(u) : '', spec: u ? specUnit(u) : '' };
   }, true);
 }
 
@@ -1154,11 +1172,13 @@ async function bacaIzinPelanggan(tx: Transaction, me: Me, pelangganId: string, o
     bolehOrder(me, order);
     if (!pelangganId) pelangganId = order.pelangganId;
     if (order.pelangganId !== pelangganId) throw new UserError('Unit ini bukan milik konsumen di order ini.');
-  } else if (me.peran === 'karyawan') throw new UserError('Buka dari tugas order untuk mencatat unit.');
+  } else if (me.peran === 'karyawan' && !pelangganId) throw new UserError('Buka dari tugas order untuk mencatat unit.');
   if (!pelangganId) throw new UserError('Order ini belum terhubung ke data konsumen. Minta admin menyimpan ulang order.');
   const ref = db.doc('pelanggan/' + str(pelangganId, 64));
   const snap = await tx.get(ref);
   if (!snap.exists) throw new UserError('Data konsumen tidak ditemukan.');
+  /* tanpa order, karyawan hanya boleh mengubah unit instansi yang sedang mode pendataan */
+  if (!order && me.peran === 'karyawan' && !snap.get('pendataan')) throw new UserError('Buka dari tugas order untuk mencatat unit.');
   return { ref, snap, order, units: ((snap.get('units') || []) as UnitAC[]).map(u => ({ ...u })) };
 }
 
@@ -1169,6 +1189,7 @@ function tulisPasang(tx: Transaction, me: Me, stiker: DocumentSnapshot, pelangga
   const st = stiker.data() as Stiker;
   if (st.status === 'aktif' && !(st.pelangganId === pelangganId && st.unitId === unit.id)) throw new UserError(`Stiker ${kode} sudah terpasang di unit lain.`);
   if (st.status === 'diganti') throw new UserError(`Stiker ${kode} sudah tidak berlaku (pernah diganti). Pakai stiker lain.`);
+  if (st.untuk && st.untuk !== pelangganId) throw new UserError(`Stiker ${kode} khusus untuk instansi lain, tidak bisa dipasang di sini.`);
   const db = adminDb();
   if (unit.kode && unit.kode !== kode) tx.set(db.doc('stiker/' + unit.kode), { status: 'diganti', digantiOleh: kode }, { merge: true });
   tx.set(db.doc('stiker/' + kode), { status: 'aktif', pelangganId, unitId: unit.id, dipasang: { oleh: me.nama, at: Date.now() } }, { merge: true });
@@ -1222,7 +1243,7 @@ export async function simpanUnitLapangan(v: UnitLapanganInput): Promise<ResultOf
         }
         Object.assign(unit, spec);
       } else {
-        if (izin.units.length >= 300) throw new UserError('Unit konsumen ini sudah terlalu banyak.');
+        if (izin.units.length >= MAKS_UNIT) throw new UserError('Unit konsumen ini sudah terlalu banyak.');
         unit = { id: idAcak(), ...spec, tipe: spec.tipe || 'Split', intervalBulan: +izin.snap.get('intervalBulan') || 3 };
         izin.units.push(unit);
       }
@@ -1234,6 +1255,69 @@ export async function simpanUnitLapangan(v: UnitLapanganInput): Promise<ResultOf
         units: izin.units, unitKodes: kodesDari(izin.units),
         gedung: gedung && !sama ? [...daftarGedung, gedung].slice(0, 80) : daftarGedung,
         cekTeknisi: true, updatedAt: Date.now(),
+      });
+      return { unitId: unit.id };
+    });
+  });
+}
+
+/* ---------------- mode pendataan AC instansi (stiker khusus, tanpa order) ---------------- */
+export type UnitPendataan = Pick<UnitAC, 'id' | 'kode' | 'gedung' | 'label' | 'noAc' | 'merk' | 'pk' | 'tipe' | 'fotoIndoor' | 'fotoOutdoor' | 'catatan'> & { at?: number };
+export type DataPendataan = { id: string; nama: string; stikerNama: string; seri: string; gedung: string[]; units: UnitPendataan[]; kosong: number };
+export async function dataPendataan(): Promise<ResultOf<DataPendataan[]>> {
+  return guarded('karyawan', async () => {
+    const db = adminDb();
+    const q = await db.collection('pelanggan').where('pendataan', '==', true).get();
+    return Promise.all(q.docs.map(async s => {
+      const kosong = await db.collection('stiker').where('untuk', '==', s.id).where('status', '==', 'kosong').count().get();
+      const units = ((s.get('units') || []) as UnitAC[]).filter(u => !u.nonaktif).map(u => ({
+        id: u.id, kode: u.kode || '', gedung: u.gedung || '', label: u.label, noAc: u.noAc || '', merk: u.merk || '', pk: u.pk || '', tipe: u.tipe || '',
+        fotoIndoor: u.fotoIndoor || '', fotoOutdoor: u.fotoOutdoor || '', catatan: u.catatan || '', at: u.dicatat?.at || 0,
+      }));
+      return { id: s.id, nama: String(s.get('nama') || ''), stikerNama: String(s.get('stikerNama') || s.get('nama') || ''), seri: String(s.get('stikerSeri') || ''), gedung: (s.get('gedung') || []) as string[], units, kosong: kosong.data().count };
+    }));
+  }, true);
+}
+
+export type UnitPendataanInput = { pelangganId: string; kode: string; unitId?: string; gedung: string; label: string; noAc: string; merk: string; pk: string; tipe: string; catatan: string };
+/* scan stiker khusus → simpan unit AC baru (atau perbaiki data unit yang stikernya sama) di instansi tsb. */
+export async function simpanUnitPendataan(v: UnitPendataanInput): Promise<ResultOf<{ unitId: string }>> {
+  return guarded('karyawan', async me => {
+    const label = str(v.label, 120), merk = str(v.merk, 40), pk = str(v.pk, 10);
+    let gedung = str(v.gedung, 60);
+    if (!gedung) throw new UserError('Pilih atau ketik nama gedung.');
+    if (!label) throw new UserError('Isi nama ruangan / kamar.');
+    if (!merk || !pk) throw new UserError('Pilih merk dan PK AC.');
+    const kode = cekKode(v.kode);
+    const db = adminDb();
+    const ref = db.doc('pelanggan/' + str(v.pelangganId, 64));
+    return db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      const stiker = await tx.get(db.doc('stiker/' + kode));
+      if (!snap.exists) throw new UserError('Data instansi tidak ditemukan.');
+      if (!snap.get('pendataan') && !atLeast(me.peran, 'admin')) throw new UserError('Mode pendataan untuk instansi ini sudah ditutup admin.');
+      if (!stiker.exists) throw new UserError(`Stiker ${kode} tidak terdaftar. Cek lagi nomornya.`);
+      const st = stiker.data() as Stiker;
+      const units = ((snap.get('units') || []) as UnitAC[]).map(u => ({ ...u }));
+      let unit = v.unitId ? units.find(u => u.id === v.unitId) : units.find(u => u.kode === kode);
+      if (v.unitId && !unit) throw new UserError('Unit tidak ditemukan. Muat ulang halaman.');
+      if (!unit && st.untuk !== snap.id) throw new UserError(`Stiker ${kode} bukan stiker khusus ${snap.get('nama')}.`);
+      const daftar: string[] = snap.get('gedung') || [];
+      const sama = daftar.find(g => g.toLowerCase() === gedung.toLowerCase());
+      if (sama) gedung = sama;
+      const spec = { gedung, label, noAc: str(v.noAc, 20), merk, pk, tipe: str(v.tipe, 20) || 'Split', catatan: str(v.catatan, 500) };
+      if (unit) Object.assign(unit, spec);
+      else {
+        if (units.length >= MAKS_UNIT) throw new UserError('Unit instansi ini sudah terlalu banyak.');
+        unit = { id: idAcak(), ...spec, intervalBulan: +snap.get('intervalBulan') || 3 };
+        units.push(unit);
+      }
+      if (me.peran === 'karyawan') unit.cek = true;
+      unit.dicatat = { oleh: me.nama, at: Date.now() };
+      tulisPasang(tx, me, stiker, snap.id, unit);
+      tx.update(ref, {
+        units, unitKodes: kodesDari(units), gedung: sama ? daftar : [...daftar, gedung].slice(0, 80),
+        ...(me.peran === 'karyawan' ? { cekTeknisi: true } : {}), updatedAt: Date.now(),
       });
       return { unitId: unit.id };
     });

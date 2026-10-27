@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { connection } from 'next/server';
 import { Button } from '@/components/ui/button';
+import { FormKeluhan } from '@/components/publik/form-keluhan';
 import { KopPublik } from '@/components/publik/kop-publik';
 import { MEREK_ALIAS, MEREK_LENGKAP, WA_USAHA, WA_USAHA_TAMPIL } from '@/lib/brand';
 import { adminDb } from '@/lib/firebase-admin';
@@ -9,7 +10,7 @@ import { fmtLong, todayWIB } from '@/lib/format';
 import { normOrder } from '@/lib/order';
 import { jadwalUnit } from '@/lib/servis';
 import type { Pelanggan, Stiker, UnitAC } from '@/lib/types';
-import { isiTemplateScan, kodeDariTeks, POLA_KODE, specUnit } from '@/lib/unit';
+import { isiTemplateScan, kodeDariTeks, POLA_KODE, seriKode, specUnit } from '@/lib/unit';
 
 export const metadata: Metadata = { title: `Jadwal servis AC · ${MEREK_LENGKAP}` };
 
@@ -72,7 +73,9 @@ async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
   const u: UnitAC | undefined = p?.units?.find(x => (st?.unitId ? x.id === st.unitId : x.kode === kode));
   if (!p || !u) return <Pesan judul="Kode unit tidak ditemukan" isi="Silakan hubungi kami untuk bantuan servis AC." kode={kode} pesan={`Halo ${MEREK_ALIAS}, saya mau servis AC (kode ${kode}).`} />;
 
-  const pesan = isiTemplateScan(setSnap.get('templateScan') || '', { ...u, kode });
+  /* stiker khusus instansi (mis. RSUD-0001): nama instansi tampil & ikut di pesan WA */
+  const inst = p.stikerSeri && seriKode(kode) === p.stikerSeri ? p.stikerNama || p.nama : '';
+  const pesan = isiTemplateScan(setSnap.get('templateScan') || '', { ...u, kode, gedung: [inst, u.gedung].filter(Boolean).join(' · ') });
   const orders = (await db.collection('orders').where('pelangganId', '==', p.id).get()).docs.map(d => normOrder({ id: d.id, ...d.data() }));
   const j = jadwalUnit(u, orders, p.intervalBulan);
   const today = todayWIB(); // dipakai juga untuk status garansi
@@ -83,6 +86,7 @@ async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="panel" style={{ padding: 16 }}>
+          {inst && <div style={{ color: '#123a9c', fontWeight: 800, fontSize: '.8rem', textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: 4 }}>{inst}</div>}
           {u.gedung && <div style={{ color: '#1d4fc4', fontWeight: 700, fontSize: '.85rem' }}>{u.gedung}</div>}
           <div style={{ fontWeight: 800, fontSize: '1.15rem', lineHeight: 1.3 }}>{u.label || 'Unit AC'}</div>
           {u.noAc && <span style={{ display: 'inline-block', marginTop: 4, background: '#eef3ff', color: '#123a9c', fontWeight: 700, fontSize: '.8rem', padding: '2px 8px', borderRadius: 6 }}>AC no. {u.noAc}</span>}
@@ -104,9 +108,7 @@ async function Isi({ params }: { params: PageProps<'/u/[kode]'>['params'] }) {
             </div>
           </div>
         )}
-        <Button size="lg" nativeButton={false} render={<a href={waLink(pesan)} target="_blank" rel="noopener noreferrer" />} style={{ background: '#1fa855', fontWeight: 700 }}>
-          💬 Chat {MEREK_ALIAS}
-        </Button>
+        <FormKeluhan pesan={pesan} wa={WA_USAHA} label={`${inst ? 'Hubungi' : 'Chat'} ${MEREK_ALIAS}`} />
         <p className="hint" style={{ textAlign: 'center', margin: 0 }}>AC yang rutin dibersihkan lebih dingin, hemat listrik, dan awet.</p>
       </div>
       <Kaki kode={kode} />

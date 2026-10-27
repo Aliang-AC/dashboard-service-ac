@@ -77,9 +77,10 @@ export type UnitAC = {
   nonaktif?: boolean; riwayat?: RiwayatUnit[];
   cek?: boolean; dicatat?: { oleh: string; at: number };
 };
-/* Stiker QR bernomor (koleksi stiker/{kode}). Dicetak kosong dulu, aktif saat dipasang ke unit. */
+/* Stiker QR bernomor (koleksi stiker/{kode}). Dicetak kosong dulu, aktif saat dipasang ke unit.
+   Stiker khusus instansi: seri = awalan kode (mis. RSUD), untuk = id pelanggan pemiliknya (hanya bisa dipasang di sana). */
 export type StatusStiker = 'kosong' | 'aktif' | 'diganti';
-export type Stiker = { kode: string; status: StatusStiker; pelangganId?: string; unitId?: string; batch: number; dibuatAt: number; dipasang?: { oleh: string; at: number } };
+export type Stiker = { kode: string; status: StatusStiker; pelangganId?: string; unitId?: string; batch: number; dibuatAt: number; dipasang?: { oleh: string; at: number }; seri?: string; untuk?: string };
 export const JENIS_PELANGGAN = ['Perorangan', 'Instansi'] as const;  // cara penagihan
 export const TIPE_LOKASI = ['Rumah', 'Kantor', 'Toko', 'Instansi', 'Lainnya'] as const;
 export const HASIL_PENGINGAT = ['Mau', 'Nanti', 'Tidak', 'Nomor salah'] as const;
@@ -99,6 +100,9 @@ export type Pelanggan = {
   cekTeknisi?: boolean;     // ada unit baru/diubah teknisi, belum dicek admin
   gedung?: string[];        // daftar gedung/area (instansi, kantor) — unit memilih dari sini
   updatedAt?: number;       // cegah simpan menimpa perubahan orang lain
+  stikerSeri?: string;      // stiker khusus instansi: awalan kode, mis. "RSUD" → RSUD-0001
+  stikerNama?: string;      // nama yang dicetak di stiker khusus, mis. "RSUD Ade Muhammad Djoen Sintang"
+  pendataan?: boolean;      // mode pendataan aktif: teknisi boleh mendata AC lewat stiker khusus tanpa order
 };
 
 /* hargaBeli disembunyikan (null) untuk selain pemilik */
@@ -187,6 +191,7 @@ export type AllData = {
   versi: number; // penanda versi data saat dimuat
   /* hanya diisi untuk pemilik */
   backup: { at: number; rows: number } | null;
+  pendataan?: { id: string; nama: string }[]; // instansi yang sedang mode pendataan AC
   backupLengkap: { at: number; ok: boolean; dokumen?: number; ukuranKb?: number; url?: string; folder?: string; error?: string } | null; backupUrl: string | null; arsipUrl: string | null;
 };
 

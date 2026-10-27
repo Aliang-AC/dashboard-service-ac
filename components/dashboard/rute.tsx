@@ -192,6 +192,9 @@ export function RuteSaya() {
         </div>
         <div style={{ fontWeight: 700, marginTop: 6 }}>Rute hari ini: {hariIni.length} · selesai {selesai}</div>
       </div>
+      {(d.pendataan || []).map(x => (
+        <a key={x.id} href={`/pendataan?p=${x.id}`} className="panel" style={{ display: 'block', marginBottom: 14, fontWeight: 700, color: '#1d4fc4' }}>📋 Pendataan AC · {x.nama} →</a>
+      ))}
       {tim && (
         <div className="actions" style={{ marginBottom: 12 }}>
           <Button variant={tim.bisaBantu ? 'default' : 'outline'} onClick={() => run(tandaBisaBantu(d.today, !tim.bisaBantu), tim.bisaBantu ? 'Tanda siap bantu dihapus' : 'Admin diberi tahu tim Anda siap bantu')}>
