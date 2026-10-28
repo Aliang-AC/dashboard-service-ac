@@ -11,11 +11,9 @@ import { MEREK, MEREK_ALIAS, TAGLINE, WA_USAHA_TAMPIL } from '@/lib/brand';
 import { isiTemplateScan, lokasiUnit, seriKode, TEMPLATE_SCAN } from '@/lib/unit';
 
 type Item = { kode: string; ket: string; inst?: string };
-const PER_LEMBAR = 12, PER_LEMBAR_INST = 10;
-
-/* Lembar stiker A4.
-   Stiker umum: A4 tegak, 3 kolom × 4 baris, tiap stiker 50 × 70 mm.
-   Stiker khusus instansi (kode seri sendiri, mis. RSUD-0001): A4 tidur, 5 kolom × 2 baris, tiap stiker 50 × 75 mm.
+const PER_LEMBAR = 16;
+/* Lembar stiker kertas F4 (215 × 330 mm) tegak, 4 kolom × 4 baris = 16 stiker.
+   Stiker umum 50 × 70 mm; stiker khusus instansi (kode seri sendiri, mis. RSUD-0001) 50 × 75 mm.
    Mode "kosong": stiker bernomor yang belum terpasang (?k=<id instansi> = stiker khusus instansi itu).
    Mode "konsumen" (?p=<id>): stiker unit milik satu konsumen. */
 export function CetakStiker() {
@@ -40,9 +38,9 @@ export function CetakStiker() {
   const [qr, setQr] = useState<Record<string, string>>({});
   const dipilih = items.filter(x => pilih[x.kode] ?? true);
   const umum = dipilih.filter(x => !x.inst), inst = dipilih.filter(x => x.inst);
-  const perLembar = khusus ? PER_LEMBAR_INST : PER_LEMBAR;
-  const maksLembar = khusus ? 20 : 10;
-  const jumlahLembar = Math.ceil(umum.length / PER_LEMBAR) + Math.ceil(inst.length / PER_LEMBAR_INST);
+  const perLembar = PER_LEMBAR;
+  const maksLembar = 12; // 192 stiker (batas sekali buat 200)
+  const jumlahLembar = Math.ceil(umum.length / PER_LEMBAR) + Math.ceil(inst.length / PER_LEMBAR);
 
   useEffect(() => {
     const origin = location.origin;
@@ -75,10 +73,8 @@ export function CetakStiker() {
   return (
     <>
       <style>{`
-        @page { size: A4; margin: 6mm; }
-        @page inst { size: A4 landscape; margin: 6mm; }
-        .lembar { display: grid; grid-template-columns: repeat(3, 50mm); gap: 2mm 3mm; justify-content: center; }
-        .lembar-inst { page: inst; display: grid; grid-template-columns: repeat(5, 50mm); gap: 2mm 3mm; justify-content: center; }
+        @page { size: 215mm 330mm; margin: 4mm; }
+        .lembar, .lembar-inst { display: grid; grid-template-columns: repeat(4, 50mm); gap: 2mm; justify-content: center; }
         .lembar + .lembar-inst { margin-top: 8mm; }
         .stk { position: relative; width: 50mm; height: 70mm; border: .25mm solid #cfd6df; border-radius: 3mm; overflow: hidden; box-sizing: border-box;
                display: flex; flex-direction: column; align-items: center; background: #fff; color: #14202b; break-inside: avoid;
@@ -110,7 +106,7 @@ export function CetakStiker() {
         .stk.v2 .top { margin-top: 1.4mm; }
         .stk.v2 .tag { margin-top: 1mm; }
         .stk.v2 .wa { margin-top: 1.4mm; }
-        @media print { .no-print { display: none !important; } body { background: #fff !important; } .wrap { max-width: none !important; padding: 0 !important; } .lembar + .lembar-inst { margin-top: 0; } }
+        @media print { .no-print { display: none !important; } body { background: #fff !important; } .wrap { max-width: none !important; padding: 0 !important; } .lembar + .lembar-inst { margin-top: 0; break-before: page; } }
       `}</style>
       <main className="wrap" style={{ paddingTop: 18, paddingBottom: 30 }}>
         <div className="no-print panel" style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -135,7 +131,7 @@ export function CetakStiker() {
               : khusus
                 ? `Stiker bernomor khusus ${namaInst} (kode ${p?.stikerSeri || '…'}-xxxx). Hanya bisa dipasang di instansi ini, lewat Mode Pendataan atau tugas order. Nomor berikutnya otomatis melanjutkan.`
                 : 'Stiker bernomor yang belum terpasang. Teknisi membawanya ke lokasi, menempelkannya di dekat dudukan remote, lalu scan dari menu Tugas supaya terhubung ke unit AC.'}
-            {' '}{khusus ? `1 lembar A4 tidur (landscape) = ${PER_LEMBAR_INST} stiker (5 × 7,5 cm).` : `1 lembar A4 = ${PER_LEMBAR} stiker (5 × 7 cm).`} Saat mencetak, pilih skala <b>100% / Actual size</b> (jangan “Fit to page”) dan nyalakan <b>Background graphics</b>.
+            {' '}1 lembar kertas <b>F4</b> = {PER_LEMBAR} stiker ({khusus ? '5 × 7,5 cm' : '5 × 7 cm'}). Saat mencetak, pilih ukuran kertas <b>F4 / Folio</b>, skala <b>100% / Actual size</b> (jangan “Fit to page”), dan nyalakan <b>Background graphics</b>.
           </p>
           {khusus && p && !p.stikerSeri && <p className="banner" style={{ margin: 0 }}>Instansi ini belum punya kode seri stiker. Atur di data konsumen → “Stiker QR khusus instansi”.</p>}
           {!hanya && (!khusus || p?.stikerSeri) && (
