@@ -15,7 +15,7 @@ import { bacaVersi, tandaiBerubah } from '@/lib/versi';
 import { alokasiBayar, hitungTotal, jumlahBayar, normOrder, statusBayar } from '@/lib/order';
 import { labelUnit, tambahBulan } from '@/lib/servis';
 import { pakaiRoll } from '@/lib/stok';
-import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, POLA_SERI, SERI_UMUM, specUnit } from '@/lib/unit';
+import { kodeDariTeks, kodeStiker, lokasiUnit, POLA_KODE, POLA_SERI, SERI_UMUM, seriKode, specUnit } from '@/lib/unit';
 import { anggotaTim, PESAN_CEPAT, type Tim, type TimHari } from '@/lib/tim';
 import { hargaOtomatis, JENIS_HARGA, TARIF_KOSONG, type PaketAC, type Tarif, type TarifLayanan } from '@/lib/tarif';
 import { clerkUsername, cocokPin, hashPin, KUNCI_MENIT, MAKS_GAGAL, normalHp, passwordAcak } from '@/lib/pin';
@@ -1133,6 +1133,34 @@ export async function beriStikerUnit(pelangganId: string): Promise<ResultOf<{ ju
       tx.update(ref, { units, unitKodes: kodesDari(units), updatedAt: Date.now() });
       return { jumlah };
     });
+  });
+}
+
+/* pemilik/admin: hapus stiker kosong (belum terpasang) yang salah buat. Kalau yang dihapus nomor paling akhir,
+   hitungan nomor ikut mundur, jadi stiker berikutnya tetap berurutan tanpa lompat. */
+export async function hapusStikerKosong(kodes: string[]): Promise<ResultOf<{ jumlah: number }>> {
+  return guarded('admin', async me => {
+    const daftar = [...new Set((kodes || []).map(k => kodeDariTeks(k)).filter(k => POLA_KODE.test(k)))].slice(0, 200);
+    if (!daftar.length) throw new UserError('Pilih stiker yang mau dihapus.');
+    const db = adminDb();
+    const seris = [...new Set(daftar.map(seriKode))];
+    const counterRef = (seri: string) => (seri === SERI_UMUM ? COUNTER_UNIT() : db.doc('counters/stiker-' + seri));
+    const jumlah = await db.runTransaction(async tx => {
+      const snaps = await Promise.all(daftar.map(k => tx.get(db.doc('stiker/' + k))));
+      const counters = await Promise.all(seris.map(s => tx.get(counterRef(s))));
+      const bukan = snaps.filter(s => !s.exists || s.get('status') !== 'kosong').map(s => s.id);
+      if (bukan.length) throw new UserError(`Tidak bisa dihapus (sudah terpasang / tidak ada): ${bukan.slice(0, 5).join(', ')}${bukan.length > 5 ? '…' : ''}`);
+      const hapus = new Set(daftar);
+      seris.forEach((seri, i) => {
+        let n = counters[i].get('n') || 0;
+        while (n > 0 && hapus.has(kodeStiker(n, seri))) n--;
+        if (n !== (counters[i].get('n') || 0)) tx.set(counterRef(seri), { n });
+      });
+      for (const s of snaps) tx.delete(s.ref);
+      return snaps.length;
+    });
+    await catat(me, 'Stiker kosong dihapus', 'stiker', daftar[0], `${jumlah} stiker: ${daftar[0]}${jumlah > 1 ? ' … ' + daftar[daftar.length - 1] : ''}`, '');
+    return { jumlah };
   });
 }
 

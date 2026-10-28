@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import QRCode from 'qrcode';
 import useSWR from 'swr';
 import { toast } from 'sonner';
-import { beriStikerUnit, buatStikerKosong, daftarStikerKosong, loadAll, saveTemplateScan } from '@/app/actions';
+import { beriStikerUnit, buatStikerKosong, daftarStikerKosong, hapusStikerKosong, loadAll, saveTemplateScan } from '@/app/actions';
 import { Button } from '@/components/ui/button';
 import { MEREK, MEREK_ALIAS, TAGLINE, WA_USAHA_TAMPIL } from '@/lib/brand';
 import { isiTemplateScan, lokasiUnit, seriKode, TEMPLATE_SCAN } from '@/lib/unit';
@@ -48,9 +48,22 @@ export function CetakStiker() {
       .then(r => setQr(Object.fromEntries(r)));
   }, [items]);
 
-  const buat = async () => {
+  const sisa = items.length % PER_LEMBAR; // stiker di lembar terakhir yang belum penuh
+  const lembarList = Array.from({ length: Math.ceil(items.length / PER_LEMBAR) }, (_, i) => items.slice(i * PER_LEMBAR, (i + 1) * PER_LEMBAR));
+  const [yakinHapus, setYakinHapus] = useState(false);
+  const hapus = async () => {
+    if (!yakinHapus) return setYakinHapus(true);
     setBusy(true);
-    const r = await buatStikerKosong(lembarBaru * perLembar, khusus || undefined);
+    const r = await hapusStikerKosong(dipilih.map(x => x.kode));
+    setBusy(false); setYakinHapus(false);
+    if (!r.ok) return toast.error(r.error);
+    toast.success(`${r.data.jumlah} stiker kosong dihapus.`);
+    setPilih({});
+    kosong.mutate();
+  };
+  const buat = async (jumlah = lembarBaru * perLembar) => {
+    setBusy(true);
+    const r = await buatStikerKosong(jumlah, khusus || undefined);
     setBusy(false);
     if (!r.ok) return toast.error(r.error);
     toast.success(`Stiker ${r.data.dari} s/d ${r.data.sampai} dibuat. Siap dicetak.`);
@@ -139,7 +152,8 @@ export function CetakStiker() {
               <span className="sm">Buat stiker baru:</span>
               <input className="field" type="number" min={1} max={maksLembar} value={lembarBaru} onChange={e => setLembarBaru(Math.min(maksLembar, Math.max(1, +e.target.value || 1)))} style={{ width: 64 }} aria-label="Jumlah lembar" />
               <span className="sm">lembar ({lembarBaru * perLembar} stiker)</span>
-              <Button size="sm" variant="secondary" disabled={busy} onClick={buat}>+ Buat nomor stiker</Button>
+              <Button size="sm" variant="secondary" disabled={busy} onClick={() => buat()}>+ Buat nomor stiker</Button>
+              {sisa > 0 && !loading && <Button size="sm" variant="outline" disabled={busy} onClick={() => buat(PER_LEMBAR - sisa)}>+ {PER_LEMBAR - sisa} stiker supaya lembar terakhir penuh</Button>}
             </div>
           )}
           {hanya && tanpaKode > 0 && (
@@ -155,7 +169,23 @@ export function CetakStiker() {
                 <Button size="sm" variant="outline" onClick={() => setPilih(Object.fromEntries(items.map(x => [x.kode, true])))}>Pilih semua</Button>
                 <Button size="sm" variant="outline" onClick={() => setPilih(Object.fromEntries(items.map(x => [x.kode, false])))}>Kosongkan</Button>
                 <Button onClick={() => window.print()} disabled={!dipilih.length}>🖨 Cetak {dipilih.length} stiker ({jumlahLembar} lembar)</Button>
+                {!hanya && dipilih.length > 0 && (
+                  <Button size="sm" variant={yakinHapus ? 'destructive' : 'ghost'} disabled={busy} onClick={hapus} onBlur={() => setYakinHapus(false)}>
+                    {yakinHapus ? `Yakin hapus ${dipilih.length} stiker?` : `🗑 Hapus ${dipilih.length} yang dicentang`}
+                  </Button>
+                )}
               </div>
+              {lembarList.length > 1 && (
+                <div className="actions" style={{ alignItems: 'center' }}>
+                  <span className="sm">Pilih per lembar:</span>
+                  {lembarList.map((l, i) => (
+                    <Button key={l[0].kode} size="sm" variant="outline" onClick={() => setPilih(Object.fromEntries(items.map(x => [x.kode, l.includes(x)])))}>
+                      {i + 1}: {l[0].kode.split('-')[1]}–{l[l.length - 1].kode.split('-')[1]}{l.length < PER_LEMBAR ? ` (${l.length})` : ''}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {!hanya && <p className="hint" style={{ margin: 0 }}>Hapus hanya untuk stiker yang <b>belum dicetak / belum ditempel</b>. Kalau nomor paling akhir yang dihapus, nomor berikutnya ikut mundur sehingga tetap berurutan.</p>}
               <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 8, padding: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 2 }}>
                 {items.map(x => (
                   <label key={x.kode} className="sm" style={{ display: 'flex', gap: 8, padding: '2px 0', color: 'var(--ink)' }}>
