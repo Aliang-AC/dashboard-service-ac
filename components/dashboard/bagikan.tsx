@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { saveTemplateAjak } from '@/app/actions';
 import { Button } from '@/components/ui/button';
-import { NAMA_USAHA } from '@/lib/brand';
+import { NAMA_USAHA, SITUS } from '@/lib/brand';
 import { useDash } from './ctx';
 import { FormDialog } from './form-dialog';
 import { salinWa } from './invoice';
@@ -17,7 +17,7 @@ export const TEMPLATE_AJAK =
 export function BagikanFormDialog({ onClose }: { onClose: () => void }) {
   const { d, open, run } = useDash();
   const [svg, setSvg] = useState('');
-  const [url] = useState(() => (typeof window !== 'undefined' ? `${location.origin}/daftar` : '/daftar'));
+  const url = `${SITUS}/daftar`;
   const template = d.settings.templateAjakForm || TEMPLATE_AJAK;
   const isi = (t: string) => t.replace(/\{link\}/g, url).replace(/\{usaha\}/g, d.settings.nama || NAMA_USAHA);
   const [teks, setTeks] = useState(template);

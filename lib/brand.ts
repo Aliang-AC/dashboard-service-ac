@@ -10,3 +10,5 @@ export const KOTA = 'Sintang'; // kota di tanda tangan invoice resmi
 /* nomor WA admin — satu-satunya nomor usaha yang dipakai di semua tempat */
 export const WA_USAHA = '628989900083'; // = 0898-9900-083
 export const WA_USAHA_TAMPIL = '0898-9900-083';
+/* alamat tetap yang dicetak di QR stiker & link form daftar (dashboard-service-ac.vercel.app tetap aktif untuk stiker lama) */
+export const SITUS = 'https://aliangac.com';

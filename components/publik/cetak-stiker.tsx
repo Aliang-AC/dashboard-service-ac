@@ -7,7 +7,7 @@ import useSWR from 'swr';
 import { toast } from 'sonner';
 import { beriStikerUnit, buatStikerKosong, daftarStikerKosong, hapusStikerKosong, loadAll, saveTemplateScan } from '@/app/actions';
 import { Button } from '@/components/ui/button';
-import { MEREK, MEREK_ALIAS, TAGLINE, WA_USAHA_TAMPIL } from '@/lib/brand';
+import { MEREK, MEREK_ALIAS, SITUS, TAGLINE, WA_USAHA_TAMPIL } from '@/lib/brand';
 import { isiTemplateScan, lokasiUnit, seriKode, TEMPLATE_SCAN } from '@/lib/unit';
 
 type Item = { kode: string; ket: string; inst?: string };
@@ -43,8 +43,7 @@ export function CetakStiker() {
   const jumlahLembar = Math.ceil(umum.length / PER_LEMBAR) + Math.ceil(inst.length / PER_LEMBAR);
 
   useEffect(() => {
-    const origin = location.origin;
-    Promise.all(items.map(async x => [x.kode, await QRCode.toString(`${origin}/u/${x.kode}`, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' })] as const))
+    Promise.all(items.map(async x => [x.kode, await QRCode.toString(`${SITUS}/u/${x.kode}`, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' })] as const))
       .then(r => setQr(Object.fromEntries(r)));
   }, [items]);
 
